@@ -3,17 +3,46 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
+		"build": "wrangler deploy --dry-run",
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
-		"start": "wrangler dev",
-		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"test": "pnpm test:unit && pnpm test:integration",
+		"test:unit": "vitest run test/unit --pool=forks",
+		"test:integration": "vitest run test/*.spec.ts",
+		"typecheck": "tsc",
+		"lint": "eslint src test",
+		"format": "prettier --write src test \"*.{json,jsonc,md,mts}\"",
+		"db:generate": "drizzle-kit generate --config drizzle.d1.config.ts && drizzle-kit generate --config drizzle.repo.config.ts && drizzle-kit generate --config drizzle.firehose.config.ts",
+		"db:migrate:local": "wrangler d1 migrations apply pds-workers --local",
+		"db:migrate:remote": "wrangler d1 migrations apply pds-workers --remote",
+		"cf-typegen": "wrangler types",
+		"lex:verify": "lex install --ci",
+		"lex:generate": "lex build --lexicons ./lexicons --out ./src/lexicon/generated --clear --index-file"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.4",
+		"@eslint/js": "^10.0.1",
 		"@types/node": "^26.2.0",
+		"drizzle-kit": "^0.31.10",
+		"eslint": "^10.8.1",
+		"prettier": "^3.9.6",
 		"typescript": "^5.5.2",
+		"typescript-eslint": "^8.67.0",
 		"vitest": "~3.2.0",
 		"wrangler": "^4.123.0"
-	}
+	},
+	"dependencies": {
+		"@atproto/crypto": "^0.5.4",
+		"@atproto/did": "0.5.4",
+		"@atproto/lex": "0.3.0",
+		"@atproto/lex-cbor": "^0.1.6",
+		"@atproto/oauth-scopes": "0.5.9",
+		"@atproto/repo": "^0.10.11",
+		"@atproto/syntax": "0.7.4",
+		"@ipld/dag-cbor": "^10.0.2",
+		"@noble/curves": "^2.3.0",
+		"drizzle-orm": "^0.45.2",
+		"multiformats": "^14.0.5"
+	},
+	"type": "module"
 }

@@ -1,0 +1,1 @@
+ALTER TABLE `oauth_sessions` ADD `permissions_scope` text;

@@ -11,8 +11,90 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+export { AccountRepo } from "./durable/account-repo";
+export { Firehose } from "./durable/firehose";
+import { createRouter } from "./api/register";
+import { authorizationServerMetadata, protectedResourceMetadata } from "./auth/oauth/metadata";
+import { oauthRoute } from "./auth/oauth/routes";
+import { d1 } from "./db/d1";
+import { AccountRepository } from "./db/accounts";
+import { cleanupBlob, type BlobCleanupMessage } from "./blob/cleanup";
+import { proxyXrpc } from "./xrpc/proxy";
+import { requireAdmin } from "./auth/admin";
+import { XrpcError, xrpcErrorResponse } from "./xrpc/errors";
+import { validDid } from "./identity/did";
+import { AuditRepository } from "./db/audit";
+import { tokenHash } from "./crypto/jwt";
+
+const router = createRouter();
+
+function pitrTarget(url: URL, env: Env) {
+	const kind = url.searchParams.get("kind");
+	if (kind === "firehose") return env.FIREHOSE.getByName("global");
+	const did = url.searchParams.get("did") ?? "";
+	if (kind !== "account" || !validDid(did)) throw new XrpcError(400, "InvalidRequest", "kind=account requires a valid did; kind=firehose does not");
+	return env.ACCOUNT_REPO.getByName(did);
+}
+
+async function adminPitr(request: Request, env: Env) {
+	try {
+		await requireAdmin(request, env);
+		const url = new URL(request.url);
+		const target = pitrTarget(url, env);
+		if (request.method === "GET") {
+			const input = url.searchParams.get("timestamp");
+			const at = input === null ? undefined : Date.parse(input);
+			if (at !== undefined && (!Number.isFinite(at) || at > Date.now() || at < Date.now() - 30 * 86_400_000)) throw new XrpcError(400, "InvalidRequest", "timestamp must be within the previous 30 days");
+			return Response.json({ bookmark: await target.pitrBookmark(at) });
+		}
+		if (request.method !== "POST") throw new XrpcError(405, "MethodNotAllowed");
+		if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new XrpcError(400, "InvalidRequest", "Content-Type must be application/json");
+		const bytes = new Uint8Array(await request.arrayBuffer());
+		if (bytes.length > 2_048) throw new XrpcError(413, "PayloadTooLarge");
+		const { bookmark } = JSON.parse(new TextDecoder().decode(bytes)) as { bookmark?: string };
+		if (!bookmark || bookmark.length > 256 || !/^[A-Za-z0-9_-]+$/.test(bookmark) || request.headers.get("x-confirm-restore") !== bookmark) throw new XrpcError(400, "InvalidRequest", "x-confirm-restore must exactly match a valid bookmark");
+		const undoBookmark = await target.schedulePitrRestore(bookmark);
+		await new AuditRepository(d1(env.DB)).record({ action: "admin.pitr.scheduled", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(), ipHash: await tokenHash(request.headers.get("cf-connecting-ip") ?? "unknown"), detail: { kind: url.searchParams.get("kind"), did: url.searchParams.get("did"), bookmark, undoBookmark } });
+		return Response.json({ undoBookmark, restartRequired: true }, { status: 202 });
+	} catch (error) { return xrpcErrorResponse(error, request.headers.get("x-request-id") ?? crypto.randomUUID()); }
+}
+
+function oauthHeaders(response: Response) {
+	const headers = new Headers(response.headers);
+	headers.set("access-control-allow-origin", "*");
+	headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+	headers.set("access-control-allow-headers", "content-type, dpop");
+	headers.set("access-control-expose-headers", "dpop-nonce");
+	headers.set("x-content-type-options", "nosniff");
+	headers.set("referrer-policy", "no-referrer");
+	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export default {
-	async fetch(request, env, ctx): Promise<Response> {
-		return new Response("Hello World!");
+	async fetch(request, env): Promise<Response> {
+		const pathname = new URL(request.url).pathname;
+		if (pathname === "/admin/pitr") return adminPitr(request, env);
+		if (pathname === "/.well-known/oauth-protected-resource") return Response.json(protectedResourceMetadata(env), { headers: { "access-control-allow-origin": "*" } });
+		if (pathname === "/.well-known/oauth-authorization-server") return Response.json(authorizationServerMetadata(env), { headers: { "access-control-allow-origin": "*" } });
+		if (pathname === "/.well-known/atproto-did") {
+			const account = await new AccountRepository(d1(env.DB)).find(new URL(request.url).hostname.toLowerCase());
+			return account?.status === "active" ? new Response(account.did, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } }) : new Response("Not Found", { status: 404 });
+		}
+		if (pathname.startsWith("/oauth/")) {
+			if (request.method === "OPTIONS") return oauthHeaders(new Response(null, { status: 204 }));
+			return oauthHeaders(await oauthRoute(request, env) ?? new Response("Not Found", { status: 404 }));
+		}
+		if (pathname === "/xrpc/com.atproto.sync.subscribeRepos") return env.FIREHOSE.getByName("global").fetch(request);
+		if (pathname.startsWith("/xrpc/")) {
+			const nsid = pathname.slice(6);
+			return router.has(nsid, request.method) ? router.handle(request, env) : proxyXrpc(request, env);
+		}
+		return new Response("Not Found", { status: 404 });
 	},
-} satisfies ExportedHandler<Env>;
+	async queue(batch: MessageBatch<BlobCleanupMessage>, env): Promise<void> {
+		for (const message of batch.messages) {
+			try { await cleanupBlob(env, message.body); message.ack(); }
+			catch (error) { if (error instanceof TypeError) message.ack(); else message.retry(); }
+		}
+	},
+} satisfies ExportedHandler<Env, BlobCleanupMessage>;

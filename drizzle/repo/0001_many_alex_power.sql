@@ -1,0 +1,1 @@
+ALTER TABLE `blob_refs` ADD `added_rev` text NOT NULL;

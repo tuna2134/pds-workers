@@ -11,19 +11,26 @@ import worker from "../src/index";
 // `Request` to pass to `worker.fetch()`.
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
-describe("Hello World worker", () => {
-	it("responds with Hello World! (unit style)", async () => {
-		const request = new IncomingRequest("http://example.com");
+describe("PDS worker", () => {
+	it("publishes OAuth server discovery metadata", async () => {
+		const response = await SELF.fetch("https://example.com/.well-known/oauth-authorization-server");
+		expect(await response.json()).toMatchObject({ issuer: "https://pds.example.com", require_pushed_authorization_requests: true, dpop_signing_alg_values_supported: ["ES256"], token_endpoint_auth_signing_alg_values_supported: ["ES256"] });
+		const preflight = await SELF.fetch("https://example.com/oauth/token", { method: "OPTIONS", headers: { origin: "https://client.example", "access-control-request-method": "POST", "access-control-request-headers": "content-type,dpop" } });
+		expect(preflight.status).toBe(204);
+		expect(preflight.headers.get("access-control-allow-headers")).toContain("dpop");
+	});
+	it("serves describeServer (unit style)", async () => {
+		const request = new IncomingRequest("http://example.com/xrpc/com.atproto.server.describeServer");
 		// Create an empty context to pass to `worker.fetch()`.
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, env, ctx);
 		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+		expect(await response.json()).toMatchObject({ did: "did:web:localhost", availableUserDomains: [".localhost"] });
 	});
 
-	it("responds with Hello World! (integration style)", async () => {
+	it("returns 404 outside XRPC (integration style)", async () => {
 		const response = await SELF.fetch("https://example.com");
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+		expect(response.status).toBe(404);
 	});
 });

@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX `oauth_sessions_state_hash_unique` ON `oauth_sessions` (`state_hash`);--> statement-breakpoint
+CREATE UNIQUE INDEX `oauth_sessions_pkce_challenge_unique` ON `oauth_sessions` (`pkce_challenge`);
