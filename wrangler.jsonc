@@ -29,12 +29,6 @@
 		{
 			"binding": "DB",
 			"database_name": "pds-workers",
-			"database_id": "00000000-0000-0000-0000-000000000000",
-			"migrations_dir": "drizzle/d1"
-		},
-		{
-			"binding": "pds_workers",
-			"database_name": "pds-workers",
 			"database_id": "2675b1fe-3c03-4e17-8cfe-31b3118f0631"
 		}
 	],
@@ -84,10 +78,6 @@
 		{
 			"binding": "BLOBS",
 			"bucket_name": "pds-workers-blobs"
-		},
-		{
-			"bucket_name": "pds-workers-blobs",
-			"binding": "pds_workers_blobs"
 		}
 	],
 	"send_email": [
