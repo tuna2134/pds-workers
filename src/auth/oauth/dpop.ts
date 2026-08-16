@@ -37,8 +37,8 @@ export async function verifyDpop(proof: string, expected: { method: string; url:
 	if (parts.length !== 3) throw new TypeError("Invalid DPoP JWT");
 	const header = json<{ typ?: string; alg?: string; jwk?: EcJwk }>(parts[0]);
 	const claims = json<Partial<DpopClaims>>(parts[1]);
-	if (header.typ?.toLowerCase() !== "dpop+jwt" || header.alg !== "ES256" || header.jwk?.kty !== "EC" || header.jwk.crv !== "P-256" || !header.jwk.x || !header.jwk.y) throw new TypeError("Unsupported DPoP header");
-	if (!claims.jti || !claims.htm || !claims.htu || !Number.isInteger(claims.iat) || !claims.nonce) throw new TypeError("Invalid DPoP claims");
+	if (header.typ?.toLowerCase() !== "dpop+jwt" || header.alg !== "ES256" || header.jwk?.kty !== "EC" || header.jwk.crv !== "P-256" || typeof header.jwk.x !== "string" || typeof header.jwk.y !== "string" || "d" in header.jwk) throw new TypeError("Unsupported DPoP header");
+	if (typeof claims.jti !== "string" || !claims.jti || typeof claims.htm !== "string" || typeof claims.htu !== "string" || !Number.isInteger(claims.iat) || typeof claims.nonce !== "string" || !claims.nonce || claims.ath !== undefined && typeof claims.ath !== "string") throw new TypeError("Invalid DPoP claims");
 	const url = new URL(expected.url); url.search = ""; url.hash = "";
 	if (claims.htm !== expected.method.toUpperCase() || claims.htu !== url.href || claims.nonce !== expected.nonce) throw new TypeError("DPoP request binding mismatch");
 	const now = expected.now ?? Math.floor(Date.now() / 1000);

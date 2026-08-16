@@ -4,8 +4,7 @@ import type { AccountRepo, RepoWrite } from "../durable/account-repo";
 import { d1 } from "../db/d1";
 import { AccountRepository } from "../db/accounts";
 import { SessionRepository } from "../auth/session";
-import { verifyPassword } from "../auth/password";
-import { hashPassword } from "../auth/password";
+import { hashPassword, verifyPassword, verifyPasswordOrDummy } from "../auth/password";
 import { TidClock } from "../repo/tid";
 import { tokenHash } from "../crypto/jwt";
 import { BlobStorage } from "../blob/storage";
@@ -288,8 +287,8 @@ export function createRouter(): XrpcRouter {
 		if (!accountLimit.success || !ipLimit.success) throw new XrpcError(429, "RateLimitExceeded", "Too many login attempts");
 		const database = d1(env.DB);
 		const account = await new AccountRepository(database).find(input.identifier);
+		const main = await verifyPasswordOrDummy(input.password, account?.passwordHash);
 		if (!account || !["active", "deactivated"].includes(account.status)) { await audit(context, "auth.login.failed"); throw new XrpcError(401, "AuthenticationRequired", "Invalid identifier or password"); }
-		const main = await verifyPassword(input.password, account.passwordHash);
 		const appPassword = main ? null : await new AppPasswordRepository(database).find(account.id, input.password);
 		if (!main && !appPassword) { await audit(context, "auth.login.failed", account.id); throw new XrpcError(401, "AuthenticationRequired", "Invalid identifier or password"); }
 		const tokens = await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(account, appPassword ? { appPasswordId: appPassword.id, privileged: appPassword.privileged } : undefined);

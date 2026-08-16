@@ -1,11 +1,11 @@
-import { verifyPassword } from "../password";
+import { verifyPasswordOrDummy } from "../password";
 import { tokenHash } from "../../crypto/jwt";
 import { AccountRepository } from "../../db/accounts";
 import { d1 } from "../../db/d1";
 import { dpopNonce, issueDpopNonce, validDpopNonce, verifyDpop } from "./dpop";
 import { OAuthStore, randomToken } from "./store";
 import { isAtprotoOauthScope } from "@atproto/oauth-scopes";
-import { authenticateClient, clientMetadata } from "./client-auth";
+import { authenticateClient, clientMetadata, redirectUriAllowed } from "./client-auth";
 import { AuditRepository } from "../../db/audit";
 import { expandPermissionScopes } from "./permissions";
 import { constantTimeEqual } from "../../crypto/constant-time";
@@ -75,7 +75,7 @@ export async function oauthRoute(request: Request, env: Env): Promise<Response |
 			const scopes = scope.split(" ").filter(Boolean);
 			const challenge = input.get("code_challenge") ?? "";
 			const state = input.get("state") ?? "";
-			if (input.get("response_type") !== "code" || input.get("code_challenge_method") !== "S256" || !/^[A-Za-z0-9_-]{43}$/.test(challenge) || !state || !scopes.includes("atproto") || scopes.some((item) => !isAtprotoOauthScope(item)) || !metadata.redirect_uris.includes(redirectUri) || !scopes.every((item) => metadata.scope.split(" ").includes(item))) throw new TypeError("Invalid authorization request or unsupported scope");
+			if (input.get("response_type") !== "code" || input.get("code_challenge_method") !== "S256" || !/^[A-Za-z0-9_-]{43}$/.test(challenge) || !state || !scopes.includes("atproto") || scopes.some((item) => !isAtprotoOauthScope(item)) || !redirectUriAllowed(metadata, redirectUri) || !scopes.every((item) => metadata.scope.split(" ").includes(item))) throw new TypeError("Invalid authorization request or unsupported scope");
 			const permissionsScope = await expandPermissionScopes(scopes);
 			const result = await store.createPar({ clientId, state, pkceChallenge: challenge, dpopJkt: checked.verified!.jkt, redirectUri, scope, permissionsScope, loginHint: input.get("login_hint") ?? undefined, clientAuth });
 			return Response.json({ request_uri: result.requestUri, expires_in: 300 }, { status: 201, headers: { "cache-control": "no-store", "dpop-nonce": checked.nonce! } });
@@ -107,7 +107,8 @@ export async function oauthRoute(request: Request, env: Env): Promise<Response |
 			if (!accountLimit.success || !ipLimit.success) return oauthError("temporarily_unavailable", 429);
 			const account = await new AccountRepository(d1(env.DB)).find(identifier);
 			const hintedAccount = !pending.loginHint || pending.loginHint === account?.did || pending.loginHint.toLowerCase() === account?.handle.toLowerCase();
-			if (!account || !hintedAccount || account.status !== "active" || !await verifyPassword(input.get("password") ?? "", account.passwordHash)) { await audit(env, request, "oauth.authorization.failed", account?.id); return oauthError("access_denied", 401, "Invalid account or password"); }
+			const passwordValid = await verifyPasswordOrDummy(input.get("password") ?? "", account?.passwordHash);
+			if (!account || !hintedAccount || account.status !== "active" || !passwordValid) { await audit(env, request, "oauth.authorization.failed", account?.id); return oauthError("access_denied", 401, "Invalid account or password"); }
 			const authorized = await new OAuthStore(d1(env.DB)).authorize(requestUri, csrf, account.id);
 			if (!authorized) return oauthError("invalid_request");
 			await audit(env, request, "oauth.authorization.approved", account.id);
@@ -130,9 +131,8 @@ export async function oauthRoute(request: Request, env: Env): Promise<Response |
 				const found = await store.findCode(input.get("code") ?? "", clientId, input.get("redirect_uri") ?? "");
 				const verifier = input.get("code_verifier") ?? "";
 				if (!found || found.dpopJkt !== checked.verified!.jkt || !clientAuthMatches(found, clientAuth) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || await tokenHash(verifier) !== found.pkceChallenge) return oauthError("invalid_grant", 400, undefined, checked.nonce);
-				session = await store.consumeCode(found.id);
+				session = await store.consumeCode(found.id, accessToken, refreshToken, sessionExpiry(Boolean(clientAuth)));
 				if (!session) return oauthError("invalid_grant", 400, undefined, checked.nonce);
-				await store.setTokens(session.id, accessToken, refreshToken, sessionExpiry(Boolean(clientAuth)));
 			} else if (input.get("grant_type") === "refresh_token") {
 				const previous = input.get("refresh_token") ?? "";
 				const found = await store.findRefresh(previous);

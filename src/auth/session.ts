@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { tokenHash, signJwt, verifyJwt } from "../crypto/jwt";
 import type { d1 } from "../db/d1";
 import { sessions } from "../db/schema/d1";
@@ -34,8 +34,13 @@ export class SessionRepository {
 	async refresh(token: string, account: SessionAccount) {
 		const authenticated = await this.authenticate(token, "refresh+jwt");
 		if (!authenticated || authenticated.session.accountId !== account.id) return null;
-		await this.revoke(authenticated.session.id);
-		return this.create(account, authenticated.session.appPasswordId ? { appPasswordId: authenticated.session.appPasswordId, privileged: authenticated.session.scope.includes("transition:chat.bsky") } : undefined);
+		const now = Math.floor(Date.now() / 1000);
+		const accessJwt = await signJwt({ sub: account.did, aud: this.audience, scope: "com.atproto.access", iat: now, exp: now + ACCESS_SECONDS, jti: crypto.randomUUID() }, "at+jwt", this.secret);
+		const refreshJwt = await signJwt({ sub: account.did, aud: this.audience, scope: "com.atproto.refresh", iat: now, exp: now + REFRESH_SECONDS, jti: crypto.randomUUID() }, "refresh+jwt", this.secret);
+		const [rotated] = await this.db.update(sessions).set({ accessHash: await tokenHash(accessJwt), refreshHash: await tokenHash(refreshJwt), expiresAt: new Date((now + REFRESH_SECONDS) * 1000), updatedAt: new Date() }).where(and(
+			eq(sessions.id, authenticated.session.id), eq(sessions.refreshHash, await tokenHash(token)), isNull(sessions.revokedAt), gt(sessions.expiresAt, new Date()),
+		)).returning({ id: sessions.id });
+		return rotated ? { accessJwt, refreshJwt } : null;
 	}
 
 	async revoke(id: string) { await this.db.update(sessions).set({ revokedAt: new Date(), updatedAt: new Date() }).where(eq(sessions.id, id)); }

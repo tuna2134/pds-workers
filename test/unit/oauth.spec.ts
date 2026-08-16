@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { issueDpopNonce, jwkThumbprint, validDpopNonce, verifyDpop } from "../../src/auth/oauth/dpop";
-import { authenticateClient, type ClientMetadata } from "../../src/auth/oauth/client-auth";
+import { authenticateClient, clientMetadata, redirectUriAllowed, type ClientMetadata } from "../../src/auth/oauth/client-auth";
 import type { OAuthStore } from "../../src/auth/oauth/store";
 import { expandPermissionScopes } from "../../src/auth/oauth/permissions";
 import { assertPublicHost } from "../../src/utils/public-fetch";
@@ -24,6 +24,12 @@ describe("OAuth DPoP", () => {
 		const verified = await verifyDpop(`${header}.${payload}.${encode(signature)}`, { method: "POST", url: "https://pds.example.com/oauth/token?ignored=yes", nonce, now: 1000 });
 		expect(verified.jkt).toBe(await jwkThumbprint(jwk));
 		await expect(verifyDpop(`${header}.${payload}.${encode(signature)}`, { method: "GET", url: "https://pds.example.com/oauth/token", nonce, now: 1000 })).rejects.toThrow("binding mismatch");
+		const privateHeader = encode({ typ: "dpop+jwt", alg: "ES256", jwk: { ...jwk, d: "must-not-be-sent" } });
+		const privateSignature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(`${privateHeader}.${payload}`)));
+		await expect(verifyDpop(`${privateHeader}.${payload}.${encode(privateSignature)}`, { method: "POST", url: "https://pds.example.com/oauth/token", nonce, now: 1000 })).rejects.toThrow("Unsupported DPoP header");
+		const badPayload = encode({ jti: 1, htm: "POST", htu: "https://pds.example.com/oauth/token", iat: 1000, nonce });
+		const badSignature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(`${header}.${badPayload}`)));
+		await expect(verifyDpop(`${header}.${badPayload}.${encode(badSignature)}`, { method: "POST", url: "https://pds.example.com/oauth/token", nonce, now: 1000 })).rejects.toThrow("Invalid DPoP claims");
 	});
 
 	it("authenticates confidential clients with bound, non-replayable ES256 assertions", async () => {
@@ -40,6 +46,22 @@ describe("OAuth DPoP", () => {
 		const input = new URLSearchParams({ client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: `${header}.${payload}.${encode(signature)}` });
 		await expect(authenticateClient(input, metadata, "https://pds.example.com", store)).resolves.toMatchObject({ kid: "client-key", alg: "ES256" });
 		await expect(authenticateClient(input, metadata, "https://pds.example.com", store)).rejects.toThrow("replayed");
+	});
+
+	it("enforces redirect URI rules for web, native, and localhost clients", async () => {
+		const clientId = "https://client.example:8443/oauth.json";
+		const invalid = { client_id: clientId, redirect_uris: ["javascript:alert(1)"], scope: "atproto", response_types: ["code"], grant_types: ["authorization_code"], dpop_bound_access_tokens: true } as ClientMetadata;
+		await expect(clientMetadata(clientId, { findClient: async () => invalid } as OAuthStore)).rejects.toThrow("Invalid client metadata");
+		await expect(clientMetadata(clientId, { findClient: async () => ({ ...invalid, redirect_uris: ["https://client.example:443/callback"] }) } as OAuthStore)).rejects.toThrow("Invalid client metadata");
+		const native = { ...invalid, application_type: "native" as const, redirect_uris: ["example.client:/callback"] };
+		await expect(clientMetadata(clientId, { findClient: async () => native } as OAuthStore)).resolves.toBe(native);
+		const localId = `http://localhost/?redirect_uri=${encodeURIComponent("http://127.0.0.1/callback")}`;
+		const local = await clientMetadata(localId, {} as OAuthStore);
+		expect(redirectUriAllowed(local, "http://127.0.0.1:49152/callback")).toBe(true);
+		expect(redirectUriAllowed(local, "http://127.0.0.1:49152/other")).toBe(false);
+		for (const invalidLocal of ["http://localhost:8080/", "http://user@localhost/", `http://localhost/?redirect_uri=${encodeURIComponent("http://user@127.0.0.1/callback")}`]) {
+			await expect(clientMetadata(invalidLocal, { findClient: async () => undefined } as OAuthStore)).rejects.toThrow("Unsafe metadata URL");
+		}
 	});
 
 	it("resolves and safely expands published Lexicon permission sets", async () => {

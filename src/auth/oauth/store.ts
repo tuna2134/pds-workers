@@ -64,13 +64,10 @@ export class OAuthStore {
 		return this.db.select().from(oauthSessions).where(and(eq(oauthSessions.codeHash, await tokenHash(code)), eq(oauthSessions.clientId, clientId), eq(oauthSessions.redirectUri, redirectUri), isNull(oauthSessions.consumedAt), gt(oauthSessions.expiresAt, new Date()))).get();
 	}
 
-	async consumeCode(id: string) {
-		const [session] = await this.db.update(oauthSessions).set({ consumedAt: new Date(), updatedAt: new Date() }).where(and(eq(oauthSessions.id, id), isNull(oauthSessions.consumedAt))).returning();
+	async consumeCode(id: string, accessToken: string, refreshToken: string, expiresAt: Date) {
+		const now = new Date();
+		const [session] = await this.db.update(oauthSessions).set({ consumedAt: now, accessHash: await tokenHash(accessToken), refreshHash: await tokenHash(refreshToken), expiresAt, updatedAt: now }).where(and(eq(oauthSessions.id, id), isNull(oauthSessions.consumedAt), gt(oauthSessions.expiresAt, now))).returning();
 		return session;
-	}
-
-	async setTokens(id: string, accessToken: string, refreshToken: string, expiresAt: Date) {
-		await this.db.update(oauthSessions).set({ accessHash: await tokenHash(accessToken), refreshHash: await tokenHash(refreshToken), expiresAt, updatedAt: new Date() }).where(eq(oauthSessions.id, id));
 	}
 
 	async findRefresh(refreshToken: string) {

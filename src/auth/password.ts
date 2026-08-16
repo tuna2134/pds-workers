@@ -59,3 +59,10 @@ export async function verifyPassword(password: string, encoded: string): Promise
 		return equal(await derive(password, decode(salt), iterations), decode(expected));
 	} catch { return false; }
 }
+
+let dummyHash: Promise<string> | undefined;
+
+export async function verifyPasswordOrDummy(password: string, encoded?: string): Promise<boolean> {
+	const valid = await verifyPassword(password, encoded ?? await (dummyHash ??= hashPassword("invalid account password")));
+	return Boolean(encoded) && valid;
+}

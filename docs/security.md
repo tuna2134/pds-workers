@@ -11,10 +11,10 @@ Key material:
 
 Authentication:
 
-- passwords use native `node:crypto` Argon2id (19 MiB, 2 passes) when the Workers runtime exposes it, with PBKDF2-SHA256 at 600,000 iterations only as a compatibility fallback for older runtimes;
-- legacy access/refresh JWTs are short-lived/rotated and stored as hashes;
-- OAuth requires PAR, S256 PKCE, state, CSRF cookie, DPoP ES256, signed server nonce, request and token binding, JTI replay storage, ES256 `private_key_jwt` for confidential clients, and restricts authentication to the account named by `login_hint`;
-- OAuth client metadata is validated and cached for five minutes. Published `include:` permission sets are authority-checked through `_lexicon` DNS and DID/PDS resolution, then namespace-confined by the official `@atproto/oauth-scopes` implementation.
+- passwords use native `node:crypto` Argon2id (19 MiB, 2 passes) when the Workers runtime exposes it, with PBKDF2-SHA256 at 600,000 iterations only as a compatibility fallback for older runtimes; missing-account login attempts run the same KDF path to reduce enumeration timing differences;
+- legacy access/refresh JWTs are short-lived, stored as hashes, and refresh rotation is claimed by an atomic conditional D1 update so concurrent reuse has one winner;
+- OAuth requires PAR, S256 PKCE, state, CSRF cookie, DPoP ES256, signed server nonce, request and token binding, JTI replay storage, ES256 `private_key_jwt` for confidential clients, and restricts authentication to the account named by `login_hint`; DPoP headers reject private JWK material and malformed claim types, while authorization-code consumption and token-hash storage use one conditional D1 update;
+- OAuth client metadata is validated and cached for five minutes; redirect URIs enforce the `web`/`native` scheme and origin rules, including localhost's path-match/port-ignore exception. Published `include:` permission sets are authority-checked through `_lexicon` DNS and DID/PDS resolution, then namespace-confined by the official `@atproto/oauth-scopes` implementation.
 - Generic service proxying requires an active authenticated account, checks `rpc` permissions, accepts only a resolved HTTPS DID service origin, strips client credentials and cookies, limits request bodies, and applies a dedicated rate limit.
 - existing-DID account creation requires a five-minute service JWT issued by the DID's current signing key with exact audience and `lxm`; migrated accounts remain deactivated and publicly unreadable until the live DID document names this PDS and its reserved repo key;
 - submitted PLC operations must extend the current PLC log, verify against a current rotation key, and retain the PDS-generated rotation, signing, handle, and service credentials before forwarding;

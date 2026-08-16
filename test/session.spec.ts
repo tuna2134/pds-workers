@@ -240,8 +240,9 @@ describe("password sessions", () => {
 		expect(callback.searchParams.get("iss")).toBe("https://pds.example.com");
 		expect(approved.headers.get("set-cookie")).toContain("Max-Age=0");
 		const tokenNonce = par.headers.get("dpop-nonce")!;
-		const token = await SELF.fetch("https://example.com/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/token", tokenNonce) }, body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code")!, client_id: clientId, redirect_uri: redirectUri, code_verifier: verifier }) });
-		expect(token.status).toBe(200);
+		const exchanges = await Promise.all([1, 2].map(async () => SELF.fetch("https://example.com/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/token", tokenNonce) }, body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code")!, client_id: clientId, redirect_uri: redirectUri, code_verifier: verifier }) })));
+		expect(exchanges.map(({ status }) => status).sort()).toEqual([200, 400]);
+		const token = exchanges.find(({ status }) => status === 200)!;
 		const tokens = await token.json<{ access_token: string; refresh_token: string }>();
 		expect(tokens).toMatchObject({ token_type: "DPoP", sub: did, scope: requestedScope, access_token: expect.any(String), refresh_token: expect.any(String) });
 		const accessNonce = token.headers.get("dpop-nonce")!;
@@ -352,10 +353,8 @@ describe("password sessions", () => {
 		const missing = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.listMissingBlobs", { headers: { authorization: `Bearer ${tokens.accessJwt}` } });
 		expect(await missing.json()).toEqual({ blobs: [{ cid: blob.ref.$link, recordUri: `at://${did}/app.bsky.feed.post/auth` }] });
 
-		const refreshed = await SELF.fetch("https://example.com/xrpc/com.atproto.server.refreshSession", { method: "POST", headers: { authorization: `Bearer ${tokens.refreshJwt}` } });
-		expect(refreshed.status).toBe(200);
-		const reused = await SELF.fetch("https://example.com/xrpc/com.atproto.server.refreshSession", { method: "POST", headers: { authorization: `Bearer ${tokens.refreshJwt}` } });
-		expect(reused.status).toBe(401);
+		const refreshed = await Promise.all([1, 2].map(() => SELF.fetch("https://example.com/xrpc/com.atproto.server.refreshSession", { method: "POST", headers: { authorization: `Bearer ${tokens.refreshJwt}` } })));
+		expect(refreshed.map(({ status }) => status).sort()).toEqual([200, 401]);
 	});
 
 	it("proxies authenticated XRPC calls to a DID service", async () => {
