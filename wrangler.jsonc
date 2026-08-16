@@ -7,44 +7,132 @@
 	"name": "pds-workers",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-08-15",
-	"compatibility_flags": ["nodejs_compat"],
-	"alias": { "@atproto/common": "./src/shims/atproto-common.ts" },
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"alias": {
+		"@atproto/common": "./src/shims/atproto-common.ts"
+	},
 	"durable_objects": {
 		"bindings": [
-			{ "name": "ACCOUNT_REPO", "class_name": "AccountRepo" },
-			{ "name": "FIREHOSE", "class_name": "Firehose" }
+			{
+				"name": "ACCOUNT_REPO",
+				"class_name": "AccountRepo"
+			},
+			{
+				"name": "FIREHOSE",
+				"class_name": "Firehose"
+			}
 		]
 	},
-	"d1_databases": [{
-		"binding": "DB",
-		"database_name": "pds-workers",
-		"database_id": "00000000-0000-0000-0000-000000000000",
-		"migrations_dir": "drizzle/d1"
-	}],
-	"ratelimits": [
-		{ "name": "LOGIN_ACCOUNT_RATE", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
-		{ "name": "LOGIN_IP_RATE", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
-		{ "name": "CREATE_ACCOUNT_RATE", "namespace_id": "1003", "simple": { "limit": 5, "period": 60 } },
-		{ "name": "OAUTH_TOKEN_RATE", "namespace_id": "1004", "simple": { "limit": 60, "period": 60 } },
-		{ "name": "PROXY_RATE", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "pds-workers",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "drizzle/d1"
+		},
+		{
+			"binding": "pds_workers",
+			"database_name": "pds-workers",
+			"database_id": "2675b1fe-3c03-4e17-8cfe-31b3118f0631"
+		}
 	],
-	"r2_buckets": [{ "binding": "BLOBS", "bucket_name": "pds-workers-blobs" }],
-	"send_email": [{ "name": "EMAIL" }],
+	"ratelimits": [
+		{
+			"name": "LOGIN_ACCOUNT_RATE",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		},
+		{
+			"name": "LOGIN_IP_RATE",
+			"namespace_id": "1002",
+			"simple": {
+				"limit": 30,
+				"period": 60
+			}
+		},
+		{
+			"name": "CREATE_ACCOUNT_RATE",
+			"namespace_id": "1003",
+			"simple": {
+				"limit": 5,
+				"period": 60
+			}
+		},
+		{
+			"name": "OAUTH_TOKEN_RATE",
+			"namespace_id": "1004",
+			"simple": {
+				"limit": 60,
+				"period": 60
+			}
+		},
+		{
+			"name": "PROXY_RATE",
+			"namespace_id": "1005",
+			"simple": {
+				"limit": 300,
+				"period": 60
+			}
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "BLOBS",
+			"bucket_name": "pds-workers-blobs"
+		},
+		{
+			"bucket_name": "pds-workers-blobs",
+			"binding": "pds_workers_blobs"
+		}
+	],
+	"send_email": [
+		{
+			"name": "EMAIL"
+		}
+	],
 	"queues": {
-		"producers": [{ "binding": "BLOB_CLEANUP", "queue": "pds-workers-blob-cleanup" }],
-		"consumers": [{ "queue": "pds-workers-blob-cleanup", "max_batch_size": 50, "max_batch_timeout": 30, "max_retries": 3, "dead_letter_queue": "pds-workers-blob-cleanup-dlq" }]
+		"producers": [
+			{
+				"binding": "BLOB_CLEANUP",
+				"queue": "pds-workers-blob-cleanup"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "pds-workers-blob-cleanup",
+				"max_batch_size": 50,
+				"max_batch_timeout": 30,
+				"max_retries": 3,
+				"dead_letter_queue": "pds-workers-blob-cleanup-dlq"
+			}
+		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["AccountRepo"] },
-		{ "tag": "v2", "new_sqlite_classes": ["Firehose"] }
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"AccountRepo"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"Firehose"
+			]
+		}
 	],
 	"vars": {
 		"SERVICE_DID": "did:web:localhost",
 		"AVAILABLE_USER_DOMAINS": "[\".localhost\"]",
-		"BLOB_UPLOAD_LIMIT": "52428800"
-		,"PDS_URL": "https://pds.example.com"
-		,"PLC_DIRECTORY": "https://plc.directory"
-		,"EMAIL_FROM": "noreply@example.com"
+		"BLOB_UPLOAD_LIMIT": "52428800",
+		"PDS_URL": "https://pds.example.com",
+		"PLC_DIRECTORY": "https://plc.directory",
+		"EMAIL_FROM": "noreply@example.com"
 	},
 	"observability": {
 		"enabled": true
