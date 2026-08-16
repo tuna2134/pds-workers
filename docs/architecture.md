@@ -11,7 +11,7 @@ R2 keys are `blobs/{did}/{raw-cid}`. Upload computes the raw CID from bytes. Dow
 Failure boundaries:
 
 - D1 and an AccountRepo DO cannot share a distributed transaction.
-- PLC publication is external and irreversible; failed creation remains explicitly `pending`.
+- PLC publication is external and irreversible; failed creation remains `pending` until an authenticated identical `createAccount` retry replays the deterministic genesis operation. An ambiguous POST is accepted only when the published PLC data exactly matches.
 - AccountRepo uses a durable SQLite outbox so transient Firehose delivery failure can be retried by alarm.
 - Identity and account events emitted during initial account creation do not yet have a D1 outbox.
 

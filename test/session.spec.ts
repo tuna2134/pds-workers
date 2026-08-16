@@ -195,6 +195,25 @@ describe("password sessions", () => {
 		fetchMock.assertNoPendingInterceptors();
 	});
 
+	it("retries an authenticated pending PLC account creation", async () => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+		const input = { handle: "retry.localhost", email: "retry@example.com", password: "a secure retry password" };
+		fetchMock.get("https://plc.directory").intercept({ method: "POST", path: /^\/did:plc:[a-z2-7]{24}$/ }).reply(503, "");
+		fetchMock.get("https://plc.directory").intercept({ method: "GET", path: /^\/did:plc:[a-z2-7]{24}\/data$/ }).reply(404, "");
+		const failed = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+		expect(failed.status).toBe(502);
+		const pending = await new AccountRepository(d1(env.DB)).find(input.handle);
+		expect(pending?.status).toBe("pending");
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, password: "not the account password" }) })).status).toBe(400);
+		fetchMock.get("https://plc.directory").intercept({ method: "POST", path: `/${pending!.did}` }).reply(200, "");
+		const retried = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+		expect(retried.status, await retried.clone().text()).toBe(200);
+		expect(await retried.json()).toMatchObject({ did: pending!.did, handle: input.handle });
+		expect((await new AccountRepository(d1(env.DB)).find(pending!.did))?.status).toBe("active");
+		fetchMock.assertNoPendingInterceptors();
+	});
+
 	it("completes PAR, browser authorization, and a DPoP-bound code exchange", async () => {
 		const did = "did:plc:oauthaccount";
 		await new AccountRepository(d1(env.DB)).create({ did, handle: "oauth.localhost", email: "oauth@example.com", passwordHash: await hashPassword("a secure oauth password") });

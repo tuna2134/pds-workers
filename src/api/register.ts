@@ -12,7 +12,7 @@ import { resolveHandle, resolveHandleMapping } from "../identity/handle";
 import { didProvider, validDid } from "../identity/did";
 import { asAtprotoDid, extractAtprotoData, didDocumentValidator } from "@atproto/did";
 import { normalizeHandle } from "../identity/handle";
-import { createPlcOperation, createPlcUpdate, createSignedPlcUpdate, k256DidKey, plcDocument, submitPlcOperation, validatePlcUpdate, type PlcDocumentData, type PlcOperation } from "../identity/plc";
+import { createPlcOperation, createPlcUpdate, createSignedPlcUpdate, k256DidKey, plcDocument, publishPlcOperation, submitPlcOperation, validatePlcUpdate, type PlcDocumentData, type PlcOperation } from "../identity/plc";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { unwrapKey, wrapKey } from "../crypto/key-wrap";
 import { dpopNonce, validDpopNonce, verifyDpop } from "../auth/oauth/dpop";
@@ -399,7 +399,24 @@ export function createRouter(): XrpcRouter {
 		if (!rate.success) throw new XrpcError(429, "RateLimitExceeded");
 		const database = d1(env.DB);
 		const accounts = new AccountRepository(database);
-		if (await accounts.find(handle) || await accounts.find(input.email.toLowerCase())) throw new XrpcError(400, "HandleNotAvailable");
+		const email = input.email.toLowerCase();
+		const [handleAccount, emailAccount] = await Promise.all([accounts.find(handle), accounts.find(email)]);
+		if (handleAccount || emailAccount) {
+			const pending = handleAccount?.id === emailAccount?.id && handleAccount?.status === "pending" ? handleAccount : undefined;
+			if (!pending || !await verifyPassword(input.password, pending.passwordHash)) throw new XrpcError(400, "HandleNotAvailable");
+			const identity = await accounts.findIdentity(pending.did);
+			if (!identity?.signingKey) throw new XrpcError(502, "UpstreamFailure", "Pending PLC identity cannot be recovered");
+			const retry = await createPlcOperation({ handle, service: env.PDS_URL, rotationKey: await unwrapKey(identity.signingKey, env.SIGNING_KEY_WRAPPING_SECRET), signingPublicKey: await repo(env, pending.did).signingKeyDid() });
+			if (retry.did !== pending.did) throw new XrpcError(502, "UpstreamFailure", "Pending PLC identity cannot be recovered");
+			try { await publishPlcOperation(env.PLC_DIRECTORY, pending.did, retry.operation); }
+			catch { throw new XrpcError(502, "UpstreamFailure", "PLC directory rejected identity creation; account remains pending"); }
+			const active = await accounts.activate(pending.id);
+			if (!active) throw new Error("Account activation failed");
+			await env.FIREHOSE.getByName("global").publishIdentity(`identity:${pending.did}:created`, pending.did, handle);
+			await env.FIREHOSE.getByName("global").publishAccount(`account:${pending.did}:active`, pending.did, true);
+			await audit(context, "account.created", active.id);
+			return { ...await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(active), handle, did: pending.did, didDoc: identity.document };
+		}
 		const signingKey = secp256k1.utils.randomSecretKey();
 		const rotationKey = secp256k1.utils.randomSecretKey();
 		if (input.did) {
@@ -412,7 +429,7 @@ export function createRouter(): XrpcRouter {
 			if (extractAtprotoData(document).aka?.toLowerCase() !== handle) throw new XrpcError(400, "IncompatibleDidDoc", "Handle does not match DID document");
 			let account;
 			try {
-				account = await accounts.createPending({ did: input.did, handle, email: input.email.toLowerCase(), passwordHash: await hashPassword(input.password), provider: input.did.split(":", 2).join(":"), wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document, status: "deactivated" });
+				account = await accounts.createPending({ did: input.did, handle, email, passwordHash: await hashPassword(input.password), provider: input.did.split(":", 2).join(":"), wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document, status: "deactivated" });
 			} catch { throw new XrpcError(400, "HandleNotAvailable"); }
 			await repo(env, input.did).initialize(input.did, signingKey);
 			await audit(context, "account.migration.created", account.id);
@@ -426,10 +443,10 @@ export function createRouter(): XrpcRouter {
 		};
 		let account;
 		try {
-			account = await accounts.createPending({ did, handle, email: input.email.toLowerCase(), passwordHash: await hashPassword(input.password), provider: "did:plc", wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document: didDoc });
+			account = await accounts.createPending({ did, handle, email, passwordHash: await hashPassword(input.password), provider: "did:plc", wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document: didDoc });
 		} catch { throw new XrpcError(400, "HandleNotAvailable"); }
 		await repo(env, did).initialize(did, signingKey);
-		try { await submitPlcOperation(env.PLC_DIRECTORY, did, operation); }
+		try { await publishPlcOperation(env.PLC_DIRECTORY, did, operation); }
 		catch { throw new XrpcError(502, "UpstreamFailure", "PLC directory rejected identity creation; account remains pending"); }
 		const active = await accounts.activate(account.id);
 		if (!active) throw new Error("Account activation failed");

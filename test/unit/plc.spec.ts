@@ -4,7 +4,7 @@ import { base58btc } from "multiformats/bases/base58";
 import { sha256 } from "multiformats/hashes/sha2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { verifySignature } from "@atproto/crypto";
-import { createPlcOperation, createPlcUpdate, createSignedPlcUpdate, k256DidKey } from "../../src/identity/plc";
+import { createPlcOperation, createPlcUpdate, createSignedPlcUpdate, k256DidKey, publishPlcOperation } from "../../src/identity/plc";
 
 describe("DID PLC", () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -20,6 +20,13 @@ describe("DID PLC", () => {
 		const encodedRotationKey = operation.rotationKeys[0].slice("did:key:".length);
 		const publicKey = base58btc.decode(encodedRotationKey).slice(2);
 		expect(secp256k1.verify(signature, digest, publicKey, { prehash: false, lowS: true })).toBe(true);
+	});
+
+	it("accepts an ambiguous PLC submission only when the published operation matches", async () => {
+		const created = await createPlcOperation({ handle: "retry.example.com", service: "https://pds.example.com", rotationKey: new Uint8Array(32).fill(3), signingPublicKey: secp256k1.getPublicKey(new Uint8Array(32).fill(4)) });
+		const data = { did: created.did, services: created.operation.services, alsoKnownAs: created.operation.alsoKnownAs, verificationMethods: created.operation.verificationMethods, rotationKeys: created.operation.rotationKeys };
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("", { status: 503 })).mockResolvedValueOnce(Response.json(data)));
+		await expect(publishPlcOperation("https://plc.directory", created.did, created.operation)).resolves.toBeUndefined();
 	});
 
 	it("signs handle updates with the authorized PLC rotation key", async () => {

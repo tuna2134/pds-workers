@@ -145,6 +145,6 @@ Relay登録は外部サービスの判断対象です。sandbox RelayでCAR、�
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
 - `node:crypto` Argon2id（19 MiB、2 passes）を利用し、未対応の旧Workers runtimeではPBKDF2-SHA256 600,000回へフォールバックします。既存PBKDF2ハッシュは移行用に検証可能です。
-- PLC登録失敗時はaccountが `pending` のまま残ります。安全なretry/reconciliation jobが必要です。
+- PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
 - `wrangler.jsonc` のexample valuesは本番値ではありません。

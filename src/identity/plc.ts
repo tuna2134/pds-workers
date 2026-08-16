@@ -29,11 +29,12 @@ function base64url(bytes: Uint8Array): string {
 	return btoa(binary).replaceAll("=", "").replaceAll("+", "-").replaceAll("/", "_");
 }
 
-export async function createPlcOperation(input: { handle: string; service: string; rotationKey: Uint8Array; signingPublicKey: Uint8Array }) {
+export async function createPlcOperation(input: { handle: string; service: string; rotationKey: Uint8Array; signingPublicKey: Uint8Array | string }) {
+	const signingKey = typeof input.signingPublicKey === "string" ? input.signingPublicKey : k256DidKey(input.signingPublicKey);
 	const unsigned = {
 		type: "plc_operation" as const,
 		rotationKeys: [k256DidKey(secp256k1.getPublicKey(input.rotationKey))],
-		verificationMethods: { atproto: k256DidKey(input.signingPublicKey) },
+		verificationMethods: { atproto: signingKey },
 		alsoKnownAs: [`at://${input.handle}`],
 		services: { atproto_pds: { type: "AtprotoPersonalDataServer" as const, endpoint: input.service } },
 		prev: null,
@@ -81,6 +82,20 @@ function validatePlcData(data: Pick<PlcDocumentData, "rotationKeys" | "verificat
 export async function submitPlcOperation(directory: string, did: string, operation: PlcOperation): Promise<void> {
 	const response = await fetch(`${directory.replace(/\/$/, "")}/${did}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(operation) });
 	if (!response.ok) throw new Error(`PLC directory rejected operation (${response.status})`);
+}
+
+export async function publishPlcOperation(directory: string, did: string, operation: PlcOperation): Promise<void> {
+	try { await submitPlcOperation(directory, did, operation); }
+	catch (submitError) {
+		try {
+			const current = await plcJson(`${directory.replace(/\/$/, "")}/${did}/data`) as PlcDocumentData;
+			const expected = { rotationKeys: operation.rotationKeys, verificationMethods: operation.verificationMethods, alsoKnownAs: operation.alsoKnownAs, services: operation.services };
+			const actual = { rotationKeys: current.rotationKeys, verificationMethods: current.verificationMethods, alsoKnownAs: current.alsoKnownAs, services: current.services };
+			const [actualBytes, expectedBytes] = [dagCbor.encode(actual), dagCbor.encode(expected)];
+			if (current.did === did && actualBytes.length === expectedBytes.length && actualBytes.every((byte, index) => byte === expectedBytes[index])) return;
+		} catch { /* preserve the publication failure */ }
+		throw submitError;
+	}
 }
 
 function decodeBase64url(value: string) {
