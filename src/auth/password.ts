@@ -1,4 +1,4 @@
-import { argon2 } from "node:crypto";
+import { argon2id } from "argon2-cfworker";
 
 const ITERATIONS = 600_000;
 const ARGON2_MEMORY = 19_456;
@@ -22,9 +22,22 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
 	return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256));
 }
 
-function deriveArgon2(password: string, salt: Uint8Array, memory: number, passes: number, parallelism: number): Promise<Uint8Array> {
-	if (typeof argon2 !== "function") return Promise.reject(new Error("Argon2id is unavailable in this Workers runtime"));
-	return new Promise((resolve, reject) => argon2("argon2id", { message: encoder.encode(password), nonce: salt, memory, passes, parallelism, tagLength: 32 }, (error, key) => error ? reject(error) : resolve(key)));
+function deriveArgon2(password: string, salt: Uint8Array): string {
+	if (typeof argon2id !== "function") {
+		throw new Error("Argon2id is unavailable in this Workers runtime");
+	}
+
+	return argon2id(password, salt);
+}
+
+export async function hashPassword(password: string): Promise<string> {
+	if (password.length < 8 || password.length > 256) {
+		throw new TypeError("Password must be between 8 and 256 characters");
+	}
+
+	const salt = crypto.getRandomValues(new Uint8Array(16));
+
+	return deriveArgon2(password, salt);
 }
 
 async function equal(left: Uint8Array, right: Uint8Array): Promise<boolean> {
@@ -33,13 +46,6 @@ async function equal(left: Uint8Array, right: Uint8Array): Promise<boolean> {
 	const signature = await crypto.subtle.sign("HMAC", key, new Uint8Array());
 	const candidate = await crypto.subtle.importKey("raw", right, { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
 	return crypto.subtle.verify("HMAC", candidate, signature, new Uint8Array());
-}
-
-export async function hashPassword(password: string): Promise<string> {
-	if (password.length < 8 || password.length > 256) throw new TypeError("Password must be between 8 and 256 characters");
-	const salt = crypto.getRandomValues(new Uint8Array(16));
-	if (typeof argon2 !== "function") return `pbkdf2-sha256$${ITERATIONS}$${encode(salt)}$${encode(await derive(password, salt, ITERATIONS))}`;
-	return `argon2id$v=19$m=${ARGON2_MEMORY},t=${ARGON2_PASSES},p=${ARGON2_PARALLELISM}$${encode(salt)}$${encode(await deriveArgon2(password, salt, ARGON2_MEMORY, ARGON2_PASSES, ARGON2_PARALLELISM))}`;
 }
 
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {

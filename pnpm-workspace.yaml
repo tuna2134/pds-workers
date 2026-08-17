@@ -7,3 +7,5 @@ allowBuilds:
   esbuild: true
   sharp: true
   workerd: true
+minimumReleaseAgeExclude:
+  - argon2-cfworker@0.1.1 || 0.1.2
