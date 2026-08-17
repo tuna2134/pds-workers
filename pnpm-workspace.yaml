@@ -8,4 +8,4 @@ allowBuilds:
   sharp: true
   workerd: true
 minimumReleaseAgeExclude:
-  - argon2-cfworker@0.1.1 || 0.1.2
+  - argon2-cfworker@0.1.1 || 0.1.2 || 0.1.3
