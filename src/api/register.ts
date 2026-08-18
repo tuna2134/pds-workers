@@ -27,7 +27,11 @@ import { PreferencesRepository } from "../db/preferences";
 import { EmailTokenRepository } from "../auth/email-token";
 import { requireAdmin } from "../auth/admin";
 
-const clock = new TidClock();
+let clock: TidClock | undefined;
+
+function tidClock(): TidClock {
+	return clock ??= new TidClock();
+}
 
 function bearer(request: Request): string {
 	const match = /^Bearer (\S+)$/.exec(request.headers.get("authorization") ?? "");
@@ -590,7 +594,7 @@ export function createRouter(): XrpcRouter {
 		ownedRepo(input.repo, account);
 		repoPermission(permissions, input.collection, "create");
 		if (input.record.$type !== input.collection) throw new XrpcError(400, "InvalidRequest", "record.$type must match collection");
-		const rkey = input.rkey ?? clock.next();
+		const rkey = input.rkey ?? tidClock().next();
 		let validationStatus;
 		try { validationStatus = validateRecord(input.collection, rkey, input.record, input.validate); }
 		catch (error) { throw new XrpcError(400, "InvalidRequest", error instanceof Error ? error.message : "Invalid record"); }
@@ -642,7 +646,7 @@ export function createRouter(): XrpcRouter {
 			}
 			if ((kind !== "create" && kind !== "update") || !write.value || write.value.$type !== write.collection) throw new XrpcError(400, "InvalidRequest", "Invalid create or update write");
 			repoPermission(permissions, write.collection, kind);
-			const rkey = write.rkey ?? (kind === "create" ? clock.next() : undefined);
+			const rkey = write.rkey ?? (kind === "create" ? tidClock().next() : undefined);
 			if (!rkey) throw new XrpcError(400, "InvalidRequest", "Update requires rkey");
 			try { validationStatuses.push(validateRecord(write.collection, rkey, write.value, input.validate)); }
 			catch (error) { throw new XrpcError(400, "InvalidRequest", error instanceof Error ? error.message : "Invalid record"); }
