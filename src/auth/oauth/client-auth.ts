@@ -115,7 +115,7 @@ export async function authenticateClient(input: URLSearchParams, metadata: Clien
 	const claims = json<{ iss?: string; sub?: string; aud?: string | string[]; jti?: string; iat?: number; exp?: number }>(parts[1]);
 	const now = Math.floor(Date.now() / 1000);
 	const audience = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-	if (header.alg !== "ES256" || !header.kid || claims.iss !== metadata.client_id || claims.sub !== metadata.client_id || !audience.includes(issuer) || !claims.jti || !Number.isInteger(claims.iat) || !Number.isInteger(claims.exp) || claims.iat! < now - 300 || claims.iat! > now + 60 || claims.exp! <= now || claims.exp! > claims.iat! + 300) throw new TypeError("Invalid client assertion claims");
+	if (header.alg !== "ES256" || !header.kid || claims.iss !== metadata.client_id || claims.sub !== metadata.client_id || !audience.includes(issuer) || !claims.jti || !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.iat! < now - 300 || claims.iat! > now + 60 || claims.exp! <= now || claims.exp! > claims.iat! + 300) throw new TypeError("Invalid client assertion claims");
 	const key = (await clientKeys(metadata)).find((candidate) => candidate.kid === header.kid && candidate.kty === "EC" && candidate.crv === "P-256" && (!candidate.alg || candidate.alg === "ES256") && !candidate.d);
 	if (!key?.x || !key.y) throw new TypeError("Unknown client authentication key");
 	const imported = await crypto.subtle.importKey("jwk", key, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hashPassword, verifyPassword, verifyPasswordOrDummy } from "../../src/auth/password";
 import { signJwt, verifyJwt } from "../../src/crypto/jwt";
+import { verifyServiceJwt } from "../../src/crypto/service-jwt";
 
 describe("authentication primitives", () => {
 	it("hashes passwords and domain-separates session tokens", async () => {
@@ -17,5 +18,12 @@ describe("authentication primitives", () => {
 		const malformed = await signJwt({ ...claims, scope: 1 } as unknown as typeof claims, "at+jwt", secret);
 		expect(await verifyJwt(malformed, "at+jwt", secret)).toBeNull();
 		await expect(signJwt(claims, "at+jwt", "c2hvcnQ")).rejects.toThrow("at least 32 bytes");
+	});
+
+	it("rejects unsafe service JWT timestamps", async () => {
+		const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+		const header = encode({ alg: "ES256K", typ: "JWT", kid: "#atproto" });
+		const payload = encode({ iss: "did:plc:issuer", aud: "did:web:pds.test", lxm: "com.atproto.server.createAccount", iat: Number.MAX_SAFE_INTEGER + 1, exp: Number.MAX_SAFE_INTEGER + 2, jti: "unsafe" });
+		expect(await verifyServiceJwt(`${header}.${payload}.AA`, "did:plc:issuer", "did:web:pds.test", "com.atproto.server.createAccount")).toBe(false);
 	});
 });

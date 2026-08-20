@@ -4,6 +4,8 @@
 
 export * as defs from './feed/defs.js'
 export * as generator from './feed/generator.js'
+export * as getAuthorFeed from './feed/getAuthorFeed.js'
+export * as getPosts from './feed/getPosts.js'
 export * as like from './feed/like.js'
 export * as post from './feed/post.js'
 export * as postgate from './feed/postgate.js'

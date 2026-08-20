@@ -2,7 +2,7 @@
 
 Cloudflare Workers、SQLite Durable Objects、D1、R2で動くAT Protocol PDSの独立実装です。公式PDSの移植やラッパーではありません。Cloudflare固有の永続化・配信層を実装し、repo v3の検証・署名・Lexicon処理には公式 `@atproto/*` ライブラリを利用します。
 
-> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフロー、`bsky.tuna2134.dev` のCloudflare Worker/D1デプロイ・wildcard routing、実PLCアカウント作成とCAR署名検証は確認済みです。実Relayとの相互運用は未検証 (**BLOCKED**) です。既知の不足は末尾に明記しています。
+> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフロー、`bsky.tuna2134.dev` のCloudflare Worker/D1デプロイ・wildcard routing、実PLCアカウント作成、CAR署名検証、`bsky.network` Relay同期は確認済みです。既知の不足は末尾に明記しています。
 
 ## Architecture
 
@@ -25,7 +25,7 @@ Internet -> Worker (XRPC, OAuth, identity)
 - SQLite DO `Firehose`: sequence、retained frames、hibernatable WebSockets
 - Workers Rate Limiting: login、account creation、OAuth/PAR/token
 - Cloudflare Email Service: password reset and account deletion confirmation
-- Generic service proxy: authenticated `/xrpc/*` requests are permission-checked, resolved from the `atproto-proxy` DID service reference, and forwarded with a short-lived signed service JWT
+- Generic service proxy: authenticated `/xrpc/*` requests are permission-checked, resolved from the `atproto-proxy` DID service reference, and forwarded with a short-lived signed service JWT; browser XRPC requests include CORS/preflight support
 - `com.atproto.repo.listMissingBlobs`: repository references are checked against R2 for migration recovery
 - `com.atproto.repo.importRepo`: signed full/differential CARs are verified with `@atproto/repo` and atomically re-signed into the account DO
 - Relay discovery: official `com.atproto.sync.listRepos` and `listReposByCollection` enumerate hosted repository heads and collections
@@ -61,7 +61,7 @@ npx wrangler secret put SESSION_JWT_SECRET
 npx wrangler secret put ADMIN_PASSWORD
 ```
 
-`PDS_URL` は公開HTTPS origin、`SERVICE_DID` はサービスDID、`PLC_DIRECTORY` は通常 `https://plc.directory`、`AVAILABLE_USER_DOMAINS` と `CRAWLERS` はJSON配列に設定します。`CRAWLERS` の各Relayにはrepo commit後、非同期で `requestCrawl` を送ります。具体的な手順は [deployment](docs/deployment.md) にあります。
+`PDS_URL` は公開HTTPS origin、`SERVICE_DID` はサービスDID、`PLC_DIRECTORY` は通常 `https://plc.directory`、`AVAILABLE_USER_DOMAINS` と `CRAWLERS` はJSON配列に設定します。`CRAWLERS` の各Relayにはidentity/account/commitイベント後、非同期で `requestCrawl` を送ります。具体的な手順は [deployment](docs/deployment.md) にあります。
 
 ## Database migrations
 
@@ -154,13 +154,15 @@ goat repo mst /tmp/repo.car
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **BLOCKED:** `bsky.network` Relay への crawl 要求と `indigo-relay` からの `describeServer` 到達までは確認済み。commit後の自動 `requestCrawl` も実装済みだが、Relay の `accountCount` が 0、`seq` が -1 のため、認証済みの本番書き込みと同一 commit event の Relay 到達確認が残っています。
+- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 7` として同期し、実PLCアカウントも `active` として現在のrepo revisionを取得しています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
+- **BLOCKED:** `pds-workers-blobs` は存在しますが、現在 R2 bucket lock rule が未設定です。保持日数はアカウント削除・blob cleanup の挙動を変えるため、運用方針を決めてから設定してください。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
 - Workers標準WebCryptoのPBKDF2-SHA256（Workersの上限である100,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
 - 本番 `BLOB_UPLOAD_LIMIT` は50 MBです。現行 `app.bsky.embed.video` Lexiconの最大300 MBを満たさないため、大容量video uploadは未対応です。Cloudflare Free/Proのrequest body上限は100 MBなので、完全対応には上位planまたは別upload経路が必要です。
 - PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
+- `app.bsky.feed.getAuthorFeed` と `getPosts` は、このPDSがホストする `app.bsky.feed.post` のみを返します。再投稿を含むAppViewの統合タイムライン、ラベル、外部投稿の検索は別サービスの責務です。
 - `wrangler.jsonc` のexample valuesは本番値ではありません。

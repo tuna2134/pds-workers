@@ -1,5 +1,5 @@
 import { jsonToLex, type Payload, type Procedure, type Query } from "@atproto/lex";
-import { com } from "./generated";
+import { app, com } from "./generated";
 
 type Method = Query | Procedure;
 
@@ -11,7 +11,7 @@ function collect(value: unknown, methods = new Map<string, Method>()): Map<strin
 	return methods;
 }
 
-const methods = collect(com);
+const methods = collect(app, collect(com));
 
 function validatePayload(payload: Payload, value: unknown): void {
 	if (!payload.schema) return;

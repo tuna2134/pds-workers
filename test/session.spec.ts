@@ -369,7 +369,22 @@ describe("password sessions", () => {
 
 		const created = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.createRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", rkey: "auth", validate: false, record: { $type: "app.bsky.feed.post", text: "authenticated", image: blob } }) });
 		expect(created.status).toBe(200);
-		expect(await created.json()).toMatchObject({ uri: `at://${did}/app.bsky.feed.post/auth` });
+		const createdPost = await created.json<{ uri: string; cid: string }>();
+		expect(createdPost).toMatchObject({ uri: `at://${did}/app.bsky.feed.post/auth` });
+		const liked = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.createRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.like", record: { $type: "app.bsky.feed.like", subject: { uri: createdPost.uri, cid: createdPost.cid }, createdAt: new Date().toISOString() } }) });
+		expect(liked.status, await liked.clone().text()).toBe(200);
+		const likedRecord = await liked.json<{ uri: string }>();
+		const batch = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.applyWrites", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, validate: false, writes: [
+			{ $type: "com.atproto.repo.applyWrites#update", collection: "app.bsky.feed.post", rkey: "auth", value: { $type: "app.bsky.feed.post", text: "updated", image: blob } },
+			{ $type: "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: "batch", value: { $type: "app.bsky.feed.post", text: "batch" } },
+			{ $type: "com.atproto.repo.applyWrites#delete", collection: "app.bsky.feed.like", rkey: likedRecord.uri.split("/").at(-1) },
+		] }) });
+		expect(batch.status, await batch.clone().text()).toBe(200);
+		expect(await batch.json()).toMatchObject({ results: [
+			{ $type: "com.atproto.repo.applyWrites#updateResult", uri: `at://${did}/app.bsky.feed.post/auth` },
+			{ $type: "com.atproto.repo.applyWrites#createResult", uri: `at://${did}/app.bsky.feed.post/batch` },
+			{ $type: "com.atproto.repo.applyWrites#deleteResult" },
+		] });
 		const listed = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.listBlobs?did=${did}`);
 		expect(await listed.json()).toEqual({ cids: [blob.ref.$link] });
 		const downloaded = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${blob.ref.$link}`);
@@ -392,14 +407,23 @@ describe("password sessions", () => {
 		const login = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createSession", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identifier: "proxy.localhost", password: "a secure proxy password" }) });
 		const { accessJwt } = await login.json<{ accessJwt: string }>();
 		const audience = "did:web:api.example#appview";
-		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=api.example&type=A" }).reply(200, { Answer: [{ type: 1, data: "93.184.216.34" }] }).times(2);
-		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=api.example&type=AAAA" }).reply(200, { Answer: [] }).times(2);
-		fetchMock.get("https://api.example").intercept({ method: "GET", path: "/.well-known/did.json" }).reply(200, JSON.stringify({ id: "did:web:api.example", service: [{ id: "#appview", type: "ExampleAppView", serviceEndpoint: "https://api.example" }] }), { headers: { "content-type": "application/json" } });
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.getSession", { headers: { authorization: `Bearer ${accessJwt}`, "atproto-proxy": audience } })).status).toBe(200);
+		expect((await SELF.fetch("https://example.com/xrpc/app.bsky.actor.getPreferences", { headers: { authorization: `Bearer ${accessJwt}`, "atproto-proxy": audience } })).status).toBe(200);
+		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=api.example&type=A" }).reply(200, { Answer: [{ type: 1, data: "93.184.216.34" }] }).times(4);
+		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=api.example&type=AAAA" }).reply(200, { Answer: [] }).times(4);
+		fetchMock.get("https://api.example").intercept({ method: "GET", path: "/.well-known/did.json" }).reply(200, JSON.stringify({ id: "did:web:api.example", service: [{ id: "#appview", type: "ExampleAppView", serviceEndpoint: "https://api.example" }] }), { headers: { "content-type": "application/json" } }).times(2);
 		fetchMock.get("https://api.example").intercept({ method: "GET", path: "/xrpc/app.example.getThing?value=1", headers: { authorization: /^Bearer /, "atproto-accept-labelers": "did:plc:labeler" } }).reply(200, JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "atproto-content-labelers": "did:plc:labeler" } });
+		fetchMock.get("https://api.example").intercept({ method: "GET", path: `/xrpc/app.bsky.feed.getAuthorFeed?actor=${did}`, headers: { authorization: /^Bearer / } }).reply((options) => {
+			const authorization = new Headers(options.headers as HeadersInit).get("authorization")!;
+			expect(JSON.parse(Buffer.from(authorization.slice(7).split(".")[1], "base64url").toString())).toMatchObject({ aud: "did:web:api.example", lxm: "app.bsky.feed.getAuthorFeed" });
+			return { statusCode: 200, data: JSON.stringify({ feed: [{ post: { viewer: { like: "at://viewer/like/1" } } }] }), responseOptions: { headers: { "content-type": "application/json" } } };
+		});
 		const response = await SELF.fetch("https://example.com/xrpc/app.example.getThing?value=1", { headers: { authorization: `Bearer ${accessJwt}`, "atproto-proxy": audience, "atproto-accept-labelers": "did:plc:labeler" } });
 		expect(response.status, await response.clone().text()).toBe(200);
 		expect(await response.json()).toEqual({ ok: true });
 		expect(response.headers.get("atproto-content-labelers")).toBe("did:plc:labeler");
+		const registered = await SELF.fetch(`https://example.com/xrpc/app.bsky.feed.getAuthorFeed?actor=${did}`, { headers: { authorization: `Bearer ${accessJwt}`, "atproto-proxy": audience } });
+		expect(await registered.json()).toEqual({ feed: [{ post: { viewer: { like: "at://viewer/like/1" } } }] });
 		fetchMock.assertNoPendingInterceptors();
 	});
 

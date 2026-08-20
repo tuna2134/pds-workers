@@ -15,7 +15,7 @@ Firehose reconnect behavior:
 - an older-than-retention cursor receives `#info OutdatedCursor`, then replay starts at the oldest retained event;
 - live sockets are hibernatable and no Worker request is held open.
 
-Production validation has passed the deployed hostname, real PLC account creation, independent `getRepo` CAR/signature verification, and Goat checks for handle resolution, record retrieval, CAR inspection, and MST inspection. The public `bsky.network` relay accepted a crawl request and reached `describeServer` from its `indigo-relay` crawler, but its status remains `accountCount: 0, seq: -1` and the account is not indexed. Indigo connects a new host without a cursor and therefore waits at the live head instead of replaying existing identity/account events. Commit-triggered crawler notifications are now enabled; downstream delivery remains **BLOCKED/unverified** until an authenticated production write emits a new event and the Relay status is checked again.
+Production validation has passed the deployed hostname, real PLC account creation, independent `getRepo` CAR/signature verification, and Goat checks for handle resolution, record retrieval, CAR inspection, and MST inspection. After an authenticated production write and identity/account/commit-triggered crawler notification, the public `bsky.network` Relay reports the PDS as `active` with `accountCount: 1`, `seq: 7`, and the hosted account as active at its current repository revision.
 
 A read-only Goat firehose probe with `goat firehose --relay-host wss://bsky.tuna2134.dev --quiet --verify-basic` stayed connected for the probe window without a handshake error. A downstream commit-event assertion still requires an authenticated write and remains unverified.
 

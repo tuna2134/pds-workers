@@ -18,6 +18,12 @@ describe("public repository XRPC", () => {
 		expect(await profile.json()).toMatchObject({ did, handle: "xrpc.localhost", displayName: "XRPC test", viewer: {}, labels: [] });
 		const byHandle = await SELF.fetch(`https://example.com/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent("xrpc.localhost")}`);
 		expect(byHandle.status).toBe(200);
+		const authorFeed = await SELF.fetch(`https://example.com/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(did)}&limit=10`);
+		expect(authorFeed.status).toBe(200);
+		expect(await authorFeed.json()).toMatchObject({ feed: [{ post: { uri: `at://${did}/app.bsky.feed.post/one`, record: { text: "hello" }, author: { did, handle: "xrpc.localhost" } } }] });
+		const hydrated = await SELF.fetch(`https://example.com/xrpc/app.bsky.feed.getPosts?uris=${encodeURIComponent(`at://${did}/app.bsky.feed.post/one`)}`);
+		expect(hydrated.status).toBe(200);
+		expect(await hydrated.json()).toMatchObject({ posts: [{ uri: `at://${did}/app.bsky.feed.post/one`, record: { text: "hello" } }] });
 
 		const record = await SELF.fetch(`https://example.com/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=app.bsky.feed.post&rkey=one`);
 		expect(record.status).toBe(200);

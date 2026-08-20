@@ -27,6 +27,13 @@ describe("PDS worker", () => {
 		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 		await waitOnExecutionContext(ctx);
 		expect(await response.json()).toMatchObject({ did: "did:web:localhost", availableUserDomains: [".localhost"] });
+		expect(response.headers.get("access-control-allow-origin")).toBe("*");
+	});
+	it("handles XRPC browser preflight", async () => {
+		const response = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.createRecord", { method: "OPTIONS", headers: { origin: "https://bsky.app", "access-control-request-method": "POST", "access-control-request-headers": "authorization,content-type,atproto-proxy" } });
+		expect(response.status).toBe(204);
+		expect(response.headers.get("access-control-allow-origin")).toBe("*");
+		expect(response.headers.get("access-control-allow-headers")).toBe("authorization,content-type,atproto-proxy");
 	});
 	it("serves the configured service DID document", async () => {
 		const response = await SELF.fetch("https://example.com/.well-known/did.json");

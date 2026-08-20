@@ -46,6 +46,9 @@ describe("OAuth DPoP", () => {
 		const input = new URLSearchParams({ client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: `${header}.${payload}.${encode(signature)}` });
 		await expect(authenticateClient(input, metadata, "https://pds.example.com", store)).resolves.toMatchObject({ kid: "client-key", alg: "ES256" });
 		await expect(authenticateClient(input, metadata, "https://pds.example.com", store)).rejects.toThrow("replayed");
+		const unsafePayload = encode({ iss: clientId, sub: clientId, aud: "https://pds.example.com", iat: Number.MAX_SAFE_INTEGER + 1, exp: Number.MAX_SAFE_INTEGER + 2, jti: "unsafe-time" });
+		const unsafeSignature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(`${header}.${unsafePayload}`)));
+		await expect(authenticateClient(new URLSearchParams({ client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: `${header}.${unsafePayload}.${encode(unsafeSignature)}` }), metadata, "https://pds.example.com", store)).rejects.toThrow("Invalid client assertion claims");
 	});
 
 	it("enforces redirect URI rules for web, native, and localhost clients", async () => {

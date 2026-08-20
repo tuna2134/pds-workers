@@ -144,6 +144,40 @@ async function activeAccount(env: Env, identifier: string) {
 	return account;
 }
 
+type LocalAccount = NonNullable<Awaited<ReturnType<AccountRepository["find"]>>>;
+type RepoRecord = Awaited<ReturnType<AccountRepo["listRecords"]>>[number];
+
+function blobUri(env: Env, did: string, value: unknown) {
+	if (!value || typeof value !== "object") return undefined;
+	const ref = (value as { ref?: { $link?: unknown } }).ref;
+	return typeof ref?.$link === "string" ? `${env.PDS_URL}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(did)}&cid=${encodeURIComponent(ref.$link)}` : undefined;
+}
+
+async function profileViewBasic(env: Env, account: LocalAccount) {
+	const record = await repo(env, account.did).getRecord("app.bsky.actor.profile/self");
+	const value = record?.value as Record<string, unknown> | undefined;
+	return {
+		did: account.did,
+		handle: account.handle,
+		...(typeof value?.displayName === "string" ? { displayName: value.displayName } : {}),
+		...(blobUri(env, account.did, value?.avatar) ? { avatar: blobUri(env, account.did, value?.avatar) } : {}),
+		createdAt: account.createdAt.toISOString(),
+	};
+}
+
+function postView(author: Awaited<ReturnType<typeof profileViewBasic>>, entry: RepoRecord) {
+	const value = entry.value as Record<string, unknown>;
+	const parsed = typeof value.createdAt === "string" && Number.isFinite(Date.parse(value.createdAt)) ? new Date(value.createdAt).toISOString() : new Date().toISOString();
+	return { $type: "app.bsky.feed.defs#postView", cid: entry.cid, uri: entry.uri, author, record: value, indexedAt: parsed };
+}
+
+function feedFilter(value: Record<string, unknown>, filter: string) {
+	if (filter === "posts_no_replies") return !value.reply;
+	if (filter === "posts_with_media") return Boolean(value.embed);
+	if (filter === "posts_with_video") return typeof value.embed === "object" && Boolean((value.embed as { $type?: unknown }).$type === "app.bsky.embed.video");
+	return true;
+}
+
 function car(bytes: Uint8Array, rev?: string) {
 	return new Response(bytes, { headers: { "content-type": "application/vnd.ipld.car", ...(rev ? { "atproto-repo-rev": rev } : {}) } });
 }
@@ -216,6 +250,32 @@ export function createRouter(): XrpcRouter {
 			await accounts.releaseHandle(account.did, handle);
 			throw new XrpcError(502, "UpstreamFailure", error instanceof Error ? error.message : "Handle update failed");
 		}
+	});
+	router.registerQuery("app.bsky.feed.getAuthorFeed", async ({ env, params }) => {
+		const account = await activeAccount(env, required(params, "actor"));
+		const filter = params.get("filter") ?? "posts_with_replies";
+		const rawLimit = Number(params.get("limit") ?? 50);
+		const offset = params.get("cursor") === null ? 0 : Number(params.get("cursor"));
+		if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 100 || !Number.isInteger(offset) || offset < 0) throw new XrpcError(400, "InvalidRequest", "Invalid feed pagination");
+		const author = await profileViewBasic(env, account);
+		const entries = (await repo(env, account.did).listRecords("app.bsky.feed.post"))
+			.filter((entry) => feedFilter(entry.value as Record<string, unknown>, filter))
+			.sort((a, b) => String((b.value as Record<string, unknown>).createdAt ?? "").localeCompare(String((a.value as Record<string, unknown>).createdAt ?? "")));
+		const page = entries.slice(offset, offset + rawLimit);
+		return { feed: page.map((entry) => ({ post: postView(author, entry) })), ...(offset + rawLimit < entries.length ? { cursor: String(offset + rawLimit) } : {}) };
+	});
+	router.registerQuery("app.bsky.feed.getPosts", async ({ env, params }) => {
+		const posts = [] as ReturnType<typeof postView>[];
+		for (const uri of params.getAll("uris")) {
+			const match = /^at:\/\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(uri);
+			if (!match || match[2] !== "app.bsky.feed.post") continue;
+			try {
+				const account = await activeAccount(env, match[1]);
+				const record = await repo(env, account.did).getRecord(`${match[2]}/${match[3]}`);
+				if (record) posts.push(postView(await profileViewBasic(env, account), record));
+			} catch { /* getPosts omits posts unavailable on this PDS */ }
+		}
+		return { posts };
 	});
 	router.registerQuery("app.bsky.actor.getPreferences", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);
@@ -692,9 +752,9 @@ export function createRouter(): XrpcRouter {
 		const target = repo(context.env, account.did);
 		const committed = await applyRepoWrites(target, prepared, input.swapCommit);
 		const results = await Promise.all(prepared.map(async (write, index) => {
-			if (write.action === "delete") return {};
+			if (write.action === "delete") return { $type: "com.atproto.repo.applyWrites#deleteResult" };
 			const record = await target.getRecord(write.path);
-			return { uri: record!.uri, cid: record!.cid, validationStatus: validationStatuses[index] };
+			return { $type: `com.atproto.repo.applyWrites#${write.action}Result`, uri: record!.uri, cid: record!.cid, validationStatus: validationStatuses[index] };
 		}));
 		return { commit: { cid: committed.commit, rev: committed.rev }, results };
 	});

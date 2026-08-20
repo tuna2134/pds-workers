@@ -74,6 +74,16 @@ function oauthHeaders(response: Response) {
 	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function xrpcHeaders(response: Response, request: Request) {
+	const headers = new Headers(response.headers);
+	headers.set("access-control-allow-origin", "*");
+	headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
+	headers.set("access-control-allow-headers", request.headers.get("access-control-request-headers") ?? "authorization, content-type, dpop, atproto-proxy, atproto-accept-labelers, x-request-id");
+	headers.set("access-control-expose-headers", "dpop-nonce, www-authenticate, atproto-content-labelers, ratelimit-limit, ratelimit-remaining, ratelimit-reset, retry-after, x-request-id");
+	headers.set("access-control-max-age", "86400");
+	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export default {
 	async fetch(request, env): Promise<Response> {
 		const pathname = new URL(request.url).pathname;
@@ -95,8 +105,11 @@ export default {
 		}
 		if (pathname === "/xrpc/com.atproto.sync.subscribeRepos") return env.FIREHOSE.getByName("global").fetch(request);
 		if (pathname.startsWith("/xrpc/")) {
+			if (request.method === "OPTIONS") return xrpcHeaders(new Response(null, { status: 204 }), request);
 			const nsid = pathname.slice(6);
-			return router.has(nsid, request.method) ? router.handle(request, env) : proxyXrpc(request, env);
+			const local = router.has(nsid, request.method);
+			const localAppState = nsid === "app.bsky.actor.getPreferences" || nsid === "app.bsky.actor.putPreferences";
+			return xrpcHeaders(await (!local || request.headers.has("atproto-proxy") && nsid.startsWith("app.bsky.") && !localAppState ? proxyXrpc(request, env) : router.handle(request, env)), request);
 		}
 		return new Response("Not Found", { status: 404 });
 	},

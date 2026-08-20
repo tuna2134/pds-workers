@@ -17,7 +17,7 @@ export async function verifyServiceJwt(token: string, issuer: string, audience: 
 		const now = Math.floor(Date.now() / 1000);
 		if (!["ES256K", "ES256"].includes(header.alg ?? "") || header.typ !== "JWT" || header.kid !== "#atproto") return false;
 		if (claims.iss !== issuer || claims.aud !== audience || claims.lxm !== lxm || typeof claims.jti !== "string") return false;
-		if (!Number.isInteger(claims.iat) || !Number.isInteger(claims.exp) || claims.iat! > now + 60 || claims.iat! < now - 300 || claims.exp! <= now || claims.exp! > now + 300) return false;
+		if (!Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.iat! > now + 60 || claims.iat! < now - 300 || claims.exp! <= now || claims.exp! > now + 300) return false;
 		const key = extractAtprotoData(await didProvider(issuer).resolve(issuer)).key;
 		return Boolean(key && await verifySignature(`did:key:${key.publicKeyMultibase}`, new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`), decode(encodedSignature)));
 	} catch { return false; }

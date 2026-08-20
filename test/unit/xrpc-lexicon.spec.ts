@@ -7,5 +7,6 @@ describe("official XRPC Lexicon validation", () => {
 		expect(() => validateXrpcBody("com.atproto.repo.createRecord", { repo: "did:plc:abcdefghijklmnopqrstuvwxyz", collection: "app.bsky.feed.post" })).toThrow();
 		expect(() => validateXrpcBody("com.atproto.repo.createRecord", { repo: "did:plc:abcdefghijklmnopqrstuvwxyz", collection: "app.bsky.feed.post", record: { $type: "app.bsky.feed.post" } })).not.toThrow();
 		expect(() => validateXrpcOutput("com.atproto.repo.createRecord", { uri: "not-an-at-uri", cid: "not-a-cid" }, Response.json({}))).toThrow();
+		expect(() => validateXrpcRequest("app.bsky.feed.getAuthorFeed", new Request("https://pds.test/xrpc/app.bsky.feed.getAuthorFeed?actor=bad"), new URLSearchParams({ actor: "bad" }))).toThrow();
 	});
 });
