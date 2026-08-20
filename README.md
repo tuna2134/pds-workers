@@ -2,7 +2,7 @@
 
 Cloudflare Workers、SQLite Durable Objects、D1、R2で動くAT Protocol PDSの独立実装です。公式PDSの移植やラッパーではありません。Cloudflare固有の永続化・配信層を実装し、repo v3の検証・署名・Lexicon処理には公式 `@atproto/*` ライブラリを利用します。
 
-> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフローと、現在のCloudflare Worker/D1デプロイは検証済みです。PLC本番登録、実Relayとの相互運用、最終公開ドメインは未検証 (**BLOCKED**) です。既知の不足は末尾に明記しています。
+> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフロー、`bsky.tuna2134.dev` のCloudflare Worker/D1デプロイ・wildcard routing、実PLCアカウント作成とCAR署名検証は確認済みです。実Relayとの相互運用は未検証 (**BLOCKED**) です。既知の不足は末尾に明記しています。
 
 ## Architecture
 
@@ -134,6 +134,16 @@ curl -sS https://bsky.network/xrpc/com.atproto.sync.requestCrawl \
 
 Relay登録は外部サービスの判断対象です。sandbox RelayでCAR、署名、MST、commit eventを検証してから本番Relayへ申請してください。
 
+独立CLIのGoatでも、公開handle・レコード・CARを確認できます。
+
+```bash
+goat resolve <handle>
+goat get 'at://<handle>/<collection>/<rkey>'
+goat repo export -o /tmp/repo.car <did>
+goat repo inspect /tmp/repo.car
+goat repo mst /tmp/repo.car
+```
+
 ## Security
 
 秘密鍵はsourceへ保存せず、AES-GCM wrapping secretで暗号化します。session/refresh tokenはhashのみ保存します。DPoPはES256署名、server nonce、`htu`、`htm`、`ath`、時刻、JTI replayを検証します。レスポンスはCSP、nosniff、Referrer-Policyを設定し、blobはrepoで参照されるまで公開しません。運用前に [security](docs/security.md) を必ず確認してください。
@@ -143,12 +153,13 @@ Relay登録は外部サービスの判断対象です。sandbox RelayでCAR、�
 ## Known limitations / BLOCKED
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
-- **BLOCKED:** 本物のPLC directoryへのidentity作成と、実Relay/`goat`/`atproto-tap`によるfederationは未検証。
+- **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
+- **BLOCKED:** 実Relay/`atproto-tap`によるfederationとfirehose downstream検証は未実施。Goatでは公開handle解決、レコード取得、CARのinspect/MST確認まで実施済み。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
-- Workers標準WebCryptoのPBKDF2-SHA256（600,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
+- Workers標準WebCryptoのPBKDF2-SHA256（Workersの上限である100,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
 - PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
 - `wrangler.jsonc` のexample valuesは本番値ではありません。

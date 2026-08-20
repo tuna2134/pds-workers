@@ -1,4 +1,5 @@
-const ITERATIONS = 600_000;
+// Cloudflare Workers WebCrypto rejects PBKDF2 counts above 100,000.
+const ITERATIONS = 100_000;
 const encoder = new TextEncoder();
 
 function encode(bytes: Uint8Array): string {
@@ -40,7 +41,7 @@ export async function verifyPassword(password: string, encoded: string): Promise
 		const [algorithm, count, salt, expected, extra] = encoded.split("$");
 		if (algorithm !== "pbkdf2-sha256" || extra) return false;
 		const iterations = Number(count);
-		if (!Number.isInteger(iterations) || iterations < 100_000 || iterations > 2_000_000) return false;
+		if (!Number.isInteger(iterations) || iterations !== ITERATIONS) return false;
 		return equal(await derive(password, decode(salt), iterations), decode(expected));
 	} catch { return false; }
 }

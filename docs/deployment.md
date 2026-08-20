@@ -21,6 +21,8 @@ curl -fsS https://pds.example.com/.well-known/oauth-authorization-server
 curl -fsS https://pds.example.com/xrpc/com.atproto.server.describeServer
 ```
 
+For the current deployment, both `bsky.tuna2134.dev/*` and `*.bsky.tuna2134.dev/*` are ordinary Worker Routes (`zone_name: tuna2134.dev`), not Custom Domains. Keep the apex and wildcard DNS records in the zone and set them to proxied; routes do not create or replace DNS records. Cloudflare Custom Domains do not support wildcard hostnames. Verify a base request returns `200` and an unregistered hosted handle returns an application `404` (not a Cloudflare `522`).
+
 ## Backup and recovery
 
 Cloudflare D1 Time Travel is always on for production-backend databases and retains minute-level history for 30 days. Record a bookmark before every remote migration and export a portable SQL copy on a separate schedule:
@@ -58,4 +60,4 @@ npx wrangler r2 bucket lock list pds-workers-blobs
 
 Back up `wrangler.jsonc`, migration sources, deployed version identifiers, and wrapping-secret recovery material in a separate access domain. A wrapping secret without the encrypted DO/D1 state is useless; encrypted state without the wrapping secret permanently loses signing ability. Never place secret values in SQL exports or repository files.
 
-The current `pds-workers` target has passed remote D1 migration, Worker deployment, binding initialization, and a read-only `describeServer` probe. Production PITR/restore drills, custom-domain routing, and Relay crawling remain **BLOCKED/unverified** until those production checks are run against the final public hostname.
+The current `pds-workers` target has passed remote D1 migration, Worker deployment, binding initialization, base route, wildcard hosted-handle route, read-only probes, and one real PLC account/CAR verification. Production PITR/restore drills and Relay crawling remain **BLOCKED/unverified**.

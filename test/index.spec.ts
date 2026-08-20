@@ -28,6 +28,11 @@ describe("PDS worker", () => {
 		await waitOnExecutionContext(ctx);
 		expect(await response.json()).toMatchObject({ did: "did:web:localhost", availableUserDomains: [".localhost"] });
 	});
+	it("serves the configured service DID document", async () => {
+		const response = await SELF.fetch("https://example.com/.well-known/did.json");
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ id: "did:web:localhost", service: [{ id: "did:web:localhost#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: "https://pds.example.com" }] });
+	});
 
 	it("returns 404 outside XRPC (integration style)", async () => {
 		const response = await SELF.fetch("https://example.com");

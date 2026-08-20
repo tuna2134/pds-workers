@@ -10,6 +10,9 @@ export default defineWorkersConfig({
 			workers: {
 				wrangler: { configPath: "./wrangler.jsonc" },
 				miniflare: { bindings: {
+					SERVICE_DID: "did:web:localhost",
+					AVAILABLE_USER_DOMAINS: "[\".localhost\"]",
+					PDS_URL: "https://pds.example.com",
 					SIGNING_KEY_WRAPPING_SECRET: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 					SESSION_JWT_SECRET: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
 					ADMIN_PASSWORD: "a-secure-admin-test-secret-value",

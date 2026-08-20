@@ -11,7 +11,7 @@ Key material:
 
 Authentication:
 
-- passwords use Workers WebCrypto PBKDF2-SHA256 at 600,000 iterations; `node:crypto` Argon2 is not assumed in production Workers, and missing-account login attempts run the same KDF path to reduce enumeration timing differences;
+- passwords use Workers WebCrypto PBKDF2-SHA256 at the Workers limit of 100,000 iterations; `node:crypto` Argon2 is not assumed in production Workers, and missing-account login attempts run the same KDF path to reduce enumeration timing differences;
 - legacy access/refresh JWTs are short-lived, stored as hashes, and refresh rotation is claimed by an atomic conditional D1 update so concurrent reuse has one winner;
 - OAuth requires PAR, S256 PKCE, state, CSRF cookie, DPoP ES256, signed server nonce, request and token binding, JTI replay storage, ES256 `private_key_jwt` for confidential clients, and restricts authentication to the account named by `login_hint`; DPoP headers reject private JWK material and malformed claim types, while authorization-code consumption and token-hash storage use one conditional D1 update;
 - OAuth client metadata is validated and cached for five minutes; redirect URIs enforce the `web`/`native` scheme and origin rules, including localhost's path-match/port-ignore exception. Published `include:` permission sets are authority-checked through `_lexicon` DNS and DID/PDS resolution, then namespace-confined by the official `@atproto/oauth-scopes` implementation.

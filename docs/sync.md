@@ -13,6 +13,8 @@ Firehose reconnect behavior:
 - an older-than-retention cursor receives `#info OutdatedCursor`, then replay starts at the oldest retained event;
 - live sockets are hibernatable and no Worker request is held open.
 
-Production validation remains **BLOCKED** without a deployed hostname and Relay access. Required external checks are: parse `getRepo` with `goat`, verify DID key signature and MST root, connect `atproto-tap`, request relay crawling, write a record, and observe the same valid commit event downstream.
+Production validation has passed the deployed hostname, real PLC account creation, independent `getRepo` CAR/signature verification, and Goat checks for handle resolution, record retrieval, CAR inspection, and MST inspection. Relay federation remains **BLOCKED** without Relay access. Remaining external checks are: connect `atproto-tap`, request relay crawling, write a record, and observe the same valid commit event downstream.
+
+A read-only Goat firehose probe with `goat firehose --relay-host wss://bsky.tuna2134.dev --quiet --verify-basic` stayed connected for the probe window without a handshake error. A downstream commit-event assertion still requires an authenticated write and remains unverified.
 
 `com.atproto.sync.listRepos` enumerates hosted DID/head/revision state from D1 plus each AccountRepo DO. `listReposByCollection` performs the corresponding bounded collection scan. Pages are capped at 999 repository RPCs so the endpoint remains below the Workers Free internal-subrequest limit; cursors continue larger scans.

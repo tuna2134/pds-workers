@@ -14,4 +14,4 @@ Blob uploads remain temporary and unavailable through sync APIs until a reposito
 
 `com.atproto.repo.importRepo` accepts bounded full or differential CARs. `@atproto/repo.verifyDiff` validates CAR blocks, MST completeness, repository DID, and the current DID signing key inside the serialized account DO operation. Imported data is indexed atomically and committed with the destination PDS repo key; missing referenced blobs remain visible through `listMissingBlobs` for migration recovery.
 
-Still required before compatibility claims: broader official DAG-CBOR/CAR fixtures, long-running mutation/property tests, storage compaction policy, and external `goat` verification against a deployed endpoint.
+Still required before compatibility claims: broader official DAG-CBOR/CAR fixtures, long-running mutation/property tests, storage compaction policy, and external relay/`atproto-tap` verification against a deployed endpoint. Goat verification against the deployed endpoint has passed.

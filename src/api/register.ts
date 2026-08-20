@@ -85,6 +85,10 @@ function emailAddress(input: string | undefined) {
 	return email;
 }
 
+function isConstraintError(error: unknown): boolean {
+	return error instanceof Error && /(?:unique|constraint|already exists)/i.test(error.message);
+}
+
 function repoAdmin(permissions: ScopePermissionsTransition | null) {
 	if (permissions && !permissions.allowsAccount({ attr: "repo", action: "manage" })) throw new XrpcError(403, "AuthScopeMismatch", "Repository management permission is required");
 }
@@ -125,6 +129,19 @@ async function repoIdentifier(env: Env, identifier: string) {
 	const account = await new AccountRepository(d1(env.DB)).find(did);
 	if (!account || account.status !== "active") throw new XrpcError(400, "RepoNotFound");
 	return repo(env, did);
+}
+
+async function activeAccount(env: Env, identifier: string) {
+	const accounts = new AccountRepository(d1(env.DB));
+	try {
+		const direct = await accounts.find(normalizeHandle(identifier));
+		if (direct?.status === "active") return direct;
+	} catch { /* resolve externally below */ }
+	let did = identifier;
+	if (!validDid(did)) try { did = await resolveHandle(identifier); } catch { throw new XrpcError(400, "InvalidRequest"); }
+	const account = await accounts.find(did);
+	if (!account || account.status !== "active") throw new XrpcError(400, "ProfileNotFound");
+	return account;
 }
 
 function car(bytes: Uint8Array, rev?: string) {
@@ -204,6 +221,26 @@ export function createRouter(): XrpcRouter {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);
 		rpcPermission(permissions, "app.bsky.actor.getPreferences", context.env.SERVICE_DID);
 		return { preferences: await new PreferencesRepository(d1(context.env.DB)).get(account.id) };
+	});
+	router.registerQuery("app.bsky.actor.getProfile", async (context) => {
+		const account = await activeAccount(context.env, required(context.params, "actor"));
+		const record = await repo(context.env, account.did).getRecord("app.bsky.actor.profile/self");
+		const value = record?.value as Record<string, unknown> | undefined;
+		const blobUrl = (field: unknown) => {
+			if (!field || typeof field !== "object") return undefined;
+			const ref = (field as { ref?: { $link?: unknown } }).ref;
+			return typeof ref?.$link === "string" ? `${context.env.PDS_URL}/xrpc/com.atproto.sync.getBlob?did=${encodeURIComponent(account.did)}&cid=${encodeURIComponent(ref.$link)}` : undefined;
+		};
+		return {
+			did: account.did,
+			handle: account.handle,
+			...(typeof value?.displayName === "string" ? { displayName: value.displayName } : {}),
+			...(typeof value?.description === "string" ? { description: value.description } : {}),
+			...(blobUrl(value?.avatar) ? { avatar: blobUrl(value?.avatar) } : {}),
+			...(blobUrl(value?.banner) ? { banner: blobUrl(value?.banner) } : {}),
+			labels: [],
+			viewer: {},
+		};
 	});
 	router.registerProcedure("app.bsky.actor.putPreferences", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);
@@ -434,7 +471,7 @@ export function createRouter(): XrpcRouter {
 			let account;
 			try {
 				account = await accounts.createPending({ did: input.did, handle, email, passwordHash: await hashPassword(input.password), provider: input.did.split(":", 2).join(":"), wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document, status: "deactivated" });
-			} catch { throw new XrpcError(400, "HandleNotAvailable"); }
+			} catch (error) { if (isConstraintError(error)) throw new XrpcError(400, "HandleNotAvailable"); throw error; }
 			await repo(env, input.did).initialize(input.did, signingKey);
 			await audit(context, "account.migration.created", account.id);
 			return { ...await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(account), handle, did: input.did, didDoc: document };
@@ -448,7 +485,7 @@ export function createRouter(): XrpcRouter {
 		let account;
 		try {
 			account = await accounts.createPending({ did, handle, email, passwordHash: await hashPassword(input.password), provider: "did:plc", wrappedRotationKey: await wrapKey(rotationKey, env.SIGNING_KEY_WRAPPING_SECRET), document: didDoc });
-		} catch { throw new XrpcError(400, "HandleNotAvailable"); }
+		} catch (error) { if (isConstraintError(error)) throw new XrpcError(400, "HandleNotAvailable"); throw error; }
 		await repo(env, did).initialize(did, signingKey);
 		try { await publishPlcOperation(env.PLC_DIRECTORY, did, operation); }
 		catch { throw new XrpcError(502, "UpstreamFailure", "PLC directory rejected identity creation; account remains pending"); }

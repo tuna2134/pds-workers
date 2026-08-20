@@ -4,7 +4,7 @@ import type { d1 } from "../db/d1";
 import { sessions } from "../db/schema/d1";
 
 type Database = ReturnType<typeof d1>;
-const ACCESS_SECONDS = 5 * 60;
+const ACCESS_SECONDS = 120 * 60;
 const REFRESH_SECONDS = 90 * 24 * 60 * 60;
 
 export interface SessionAccount { id: string; did: string }

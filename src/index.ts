@@ -76,6 +76,11 @@ export default {
 		if (pathname === "/admin/pitr") return adminPitr(request, env);
 		if (pathname === "/.well-known/oauth-protected-resource") return Response.json(protectedResourceMetadata(env), { headers: { "access-control-allow-origin": "*" } });
 		if (pathname === "/.well-known/oauth-authorization-server") return Response.json(authorizationServerMetadata(env), { headers: { "access-control-allow-origin": "*" } });
+		if (pathname === "/.well-known/did.json" && env.SERVICE_DID.startsWith("did:web:")) return Response.json({
+			"@context": ["https://www.w3.org/ns/did/v1"],
+			id: env.SERVICE_DID,
+			service: [{ id: `${env.SERVICE_DID}#atproto_pds`, type: "AtprotoPersonalDataServer", serviceEndpoint: env.PDS_URL }],
+		}, { headers: { "cache-control": "public, max-age=300" } });
 		if (pathname === "/.well-known/atproto-did") {
 			const account = await new AccountRepository(d1(env.DB)).find(new URL(request.url).hostname.toLowerCase());
 			return account?.status === "active" ? new Response(account.did, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } }) : new Response("Not Found", { status: 404 });

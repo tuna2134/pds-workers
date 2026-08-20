@@ -11,7 +11,13 @@ describe("public repository XRPC", () => {
 		await new AccountRepository(d1(env.DB)).create({ did, handle: "xrpc.localhost", email: "xrpc@example.com", passwordHash: "unused" });
 		const repo = env.ACCOUNT_REPO.getByName(did);
 		await repo.initialize(did);
+		await repo.applyWrites([{ action: "create", path: "app.bsky.actor.profile/self", record: { $type: "app.bsky.actor.profile", displayName: "XRPC test" } }]);
 		await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/one", record: { $type: "app.bsky.feed.post", text: "hello" } }]);
+		const profile = await SELF.fetch(`https://example.com/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(did)}`);
+		expect(profile.status).toBe(200);
+		expect(await profile.json()).toMatchObject({ did, handle: "xrpc.localhost", displayName: "XRPC test", viewer: {}, labels: [] });
+		const byHandle = await SELF.fetch(`https://example.com/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent("xrpc.localhost")}`);
+		expect(byHandle.status).toBe(200);
 
 		const record = await SELF.fetch(`https://example.com/xrpc/com.atproto.repo.getRecord?repo=${did}&collection=app.bsky.feed.post&rkey=one`);
 		expect(record.status).toBe(200);
