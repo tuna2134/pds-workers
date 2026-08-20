@@ -129,8 +129,9 @@ export async function oauthRoute(request: Request, env: Env): Promise<Response |
 				const found = await store.findCode(input.get("code") ?? "", clientId, input.get("redirect_uri") ?? "");
 				const verifier = input.get("code_verifier") ?? "";
 				if (!found || found.dpopJkt !== checked.verified!.jkt || !clientAuthMatches(found, clientAuth) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier) || await tokenHash(verifier) !== found.pkceChallenge) return oauthError("invalid_grant", 400, undefined, checked.nonce);
+				if (found.consumedAt) { await store.revokeSession(found.id); return oauthError("invalid_grant", 400, undefined, checked.nonce); }
 				session = await store.consumeCode(found.id, accessToken, refreshToken, sessionExpiry(Boolean(clientAuth)));
-				if (!session) return oauthError("invalid_grant", 400, undefined, checked.nonce);
+				if (!session) { await store.revokeSession(found.id); return oauthError("invalid_grant", 400, undefined, checked.nonce); }
 			} else if (input.get("grant_type") === "refresh_token") {
 				const previous = input.get("refresh_token") ?? "";
 				const found = await store.findRefresh(previous);

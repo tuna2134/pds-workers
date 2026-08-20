@@ -11,6 +11,11 @@ import { notifyCrawlers } from "../sync/crawler";
 
 const RETAIN_EVENTS = 10_000;
 
+export function firehoseBackfill(cursor: number, oldest: number) {
+	const outdated = cursor < oldest - 1;
+	return { outdated, start: outdated ? oldest : cursor + 1 };
+}
+
 export interface CommitEventInput {
 	id: string;
 	repo: string;
@@ -35,15 +40,7 @@ export class Firehose extends DurableObject<Env> {
 
 	async publishCommit(input: CommitEventInput): Promise<number> {
 		return this.#serialize(async () => {
-			if (input.ops.length > 200 || input.blocks.length > 2_000_000) {
-				const car = await decodeCar(input.blocks);
-				const commit = CID.parse(input.commit);
-				const block = car.blocks.find(({ cid }) => cid.equals(commit));
-				if (!car.roots[0]?.equals(commit) || !block) throw new TypeError("Commit diff does not contain its root commit block");
-				const blocks = encodeCar(commit, [block]);
-				if (blocks.length > 10_000) throw new RangeError("Sync commit block exceeds 10 KB");
-				return this.#publish(input.id, "#sync", (seq) => ({ seq, did: input.repo, rev: input.rev, blocks, time: input.time }));
-			}
+			if (input.ops.length > 200 || input.blocks.length > 2_000_000) return this.#publishSync(input.id, input.repo, input.rev, input.commit, input.blocks, input.time);
 			return this.#publish(input.id, "#commit", (seq) => ({
 				seq, rebase: false, tooBig: false, repo: input.repo,
 				commit: CID.parse(input.commit), rev: input.rev, since: input.since,
@@ -52,6 +49,10 @@ export class Firehose extends DurableObject<Env> {
 				blobs: [], ...(input.prevData ? { prevData: CID.parse(input.prevData) } : {}), time: input.time,
 			}));
 		});
+	}
+
+	publishSync(id: string, did: string, rev: string, commit: string, blocks: Uint8Array<ArrayBufferLike>, time = new Date().toISOString()): Promise<number> {
+		return this.#publishAndNotify(() => this.#serialize(() => this.#publishSync(id, did, rev, commit, blocks, time)));
 	}
 
 	publishIdentity(id: string, did: string, handle?: string): Promise<number> {
@@ -66,6 +67,16 @@ export class Firehose extends DurableObject<Env> {
 		const seq = await publish();
 		this.ctx.waitUntil(notifyCrawlers(this.env.CRAWLERS, this.env.PDS_URL).catch((error) => console.error(JSON.stringify({ error: error instanceof Error ? error.message : "Crawler notification failed" }))));
 		return seq;
+	}
+
+	async #publishSync(id: string, did: string, rev: string, commitText: string, source: Uint8Array<ArrayBufferLike>, time: string): Promise<number> {
+		const car = await decodeCar(source);
+		const commit = CID.parse(commitText);
+		const block = car.blocks.find(({ cid }) => cid.equals(commit));
+		if (!car.roots[0]?.equals(commit) || !block) throw new TypeError("Sync CAR does not contain its root commit block");
+		const blocks = encodeCar(commit, [block]);
+		if (blocks.length > 10_000) throw new RangeError("Sync commit block exceeds 10 KB");
+		return this.#publish(id, "#sync", (seq) => ({ seq, did, rev, blocks, time }));
 	}
 
 	pitrBookmark(at?: number) {
@@ -115,8 +126,9 @@ export class Firehose extends DurableObject<Env> {
 			server.send(streamError("FutureCursor"));
 			server.close(1008, "FutureCursor");
 		} else if (cursor !== null) {
-			if (oldest && cursor !== 0 && cursor < oldest.seq) server.send(streamFrame("#info", { name: "OutdatedCursor", message: "Cursor is outside the retained backfill window" }));
-			const start = !oldest ? 1 : cursor === 0 || cursor < oldest.seq ? oldest.seq : cursor + 1;
+			const backfill = oldest ? firehoseBackfill(cursor, oldest.seq) : { outdated: false, start: cursor + 1 };
+			if (backfill.outdated) server.send(streamFrame("#info", { name: "OutdatedCursor", message: "Cursor is outside the retained backfill window" }));
+			const start = backfill.start;
 			for (const event of await this.#db.select().from(schema.firehoseEvents).where(gte(schema.firehoseEvents.seq, start)).orderBy(asc(schema.firehoseEvents.seq)).all()) server.send(event.frame);
 		}
 		return new Response(null, { status: 101, webSocket: client });

@@ -4,6 +4,7 @@ import { decodeDagCbor, encodeDagCbor } from "../src/repo/dag-cbor";
 import { encodeBlock } from "../src/repo/cid";
 import { decodeCar, encodeCar } from "../src/repo/car";
 import { commit as commitSchema } from "../src/lexicon/generated/com/atproto/sync/subscribeRepos.defs";
+import { firehoseBackfill } from "../src/durable/firehose";
 
 function nextFrame(socket: WebSocket): Promise<Uint8Array> {
 	return new Promise((resolve, reject) => {
@@ -21,6 +22,12 @@ function decodeFrame(frame: Uint8Array) {
 }
 
 describe("subscribeRepos", () => {
+	it("only marks a cursor outdated when retained events are missing", () => {
+		expect(firehoseBackfill(0, 1)).toEqual({ outdated: false, start: 1 });
+		expect(firehoseBackfill(4, 5)).toEqual({ outdated: false, start: 5 });
+		expect(firehoseBackfill(3, 5)).toEqual({ outdated: true, start: 5 });
+	});
+
 	it("requires a WebSocket upgrade and a valid cursor", async () => {
 		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos")).status).toBe(426);
 		for (const cursor of ["-1", "1.5", "9007199254740992"]) {

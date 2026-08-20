@@ -11,6 +11,7 @@ import { buildRepoCommit } from "../src/repo/update";
 import { encodeBlock } from "../src/repo/cid";
 import { formatTid } from "../src/repo/tid";
 import { verifyRepoCar } from "@atproto/repo";
+import { BlobStorage } from "../src/blob/storage";
 
 describe("AccountRepo", () => {
 	it("isolates a DID and serializes record mutations", async () => {
@@ -80,6 +81,15 @@ describe("AccountRepo", () => {
 		await env.BLOBS.put(`blobs/${did}/${orphan}`, orphanBytes);
 		await cleanupBlob(env, { did, cid: orphan.toString() });
 		expect(await env.BLOBS.head(`blobs/${did}/${orphan}`)).toBeNull();
+	});
+
+	it("does not delete content-addressed data when cleanup enqueue fails", async () => {
+		const did = "did:plc:blobqueuefailure";
+		const bytes = new TextEncoder().encode("existing blob");
+		const cid = await cidForBytes(bytes, 0x55);
+		const cleanup = { send: () => Promise.reject(new Error("queue unavailable")) } as unknown as Queue;
+		await expect(new BlobStorage(env.BLOBS, 1_000, cleanup).upload(did, new Request("https://example.com", { method: "POST", headers: { "content-type": "application/octet-stream" }, body: bytes }))).rejects.toThrow("queue unavailable");
+		expect(await env.BLOBS.head(`blobs/${did}/${cid}`)).not.toBeNull();
 	});
 
 	it("imports signed full and differential CARs with the official verifier", async () => {

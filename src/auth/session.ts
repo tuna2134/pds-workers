@@ -23,12 +23,12 @@ export class SessionRepository {
 		return { accessJwt, refreshJwt };
 	}
 
-	async authenticate(token: string, type: "at+jwt" | "refresh+jwt") {
-		const claims = await verifyJwt(token, type, this.secret);
+	async authenticate(token: string, type: "at+jwt" | "refresh+jwt", allowExpired = false) {
+		const claims = await verifyJwt(token, type, this.secret, allowExpired);
 		if (!claims || claims.aud !== this.audience) return null;
 		const hash = await tokenHash(token);
 		const session = await this.db.select().from(sessions).where(type === "at+jwt" ? eq(sessions.accessHash, hash) : eq(sessions.refreshHash, hash)).get();
-		return session && !session.revokedAt && session.expiresAt > new Date() ? { claims, session } : null;
+		return session && !session.revokedAt && (allowExpired || session.expiresAt > new Date()) ? { claims, session } : null;
 	}
 
 	async refresh(token: string, account: SessionAccount) {

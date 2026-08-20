@@ -22,8 +22,8 @@ import { formatDidKey } from "@atproto/crypto";
 import { notifyCrawlers } from "../sync/crawler";
 
 export type RepoWrite =
-	| { action: "create" | "update"; path: string; record: Record<string, unknown>; swapRecord?: string }
-	| { action: "delete"; path: string; swapRecord?: string };
+	| { action: "create" | "update"; path: string; record: Record<string, unknown>; swapRecord?: string | null }
+	| { action: "delete"; path: string; swapRecord?: string | null };
 
 const COMMIT_RETENTION = 1_000;
 const COMPACTION_TRIGGER = 1_100;
@@ -104,11 +104,11 @@ export class AccountRepo extends DurableObject<Env> {
 			for (const write of writes) {
 				if (!validPath(write.path)) throw new TypeError("Invalid repository path");
 				const found = records.get(write.path);
-				if (write.swapRecord && found?.cid.toString() !== write.swapRecord) throw new Error("InvalidSwap");
+				if (write.swapRecord !== undefined && (write.swapRecord === null ? found !== undefined : found?.cid.toString() !== write.swapRecord)) throw new Error("InvalidSwap");
 				if (write.action === "create" && found) throw new Error("RecordAlreadyExists");
 				if (write.action === "update" && !found) throw new Error("RecordNotFound");
 				if (write.action === "delete") {
-					if (!found) throw new Error("RecordNotFound");
+					if (!found) continue;
 					records.delete(write.path);
 					operations.push({ action: "delete", path: write.path, cid: null, prev: found.cid.toString() });
 				} else {
@@ -116,10 +116,12 @@ export class AccountRepo extends DurableObject<Env> {
 					jsonToLex(write.record as never, { strict: true });
 					const encoded = await encodeBlock(jsonToIpld(write.record));
 					if (encoded.bytes.length > 1_000_000) throw new RangeError("Record block exceeds 1 MB");
+					if (found?.cid.equals(encoded.cid)) continue;
 					records.set(write.path, encoded);
 					operations.push({ action: write.action, path: write.path, cid: encoded.cid.toString(), ...(found ? { prev: found.cid.toString() } : {}) });
 				}
 			}
+			if (!operations.length) return { ...await this.describe(), noop: true as const };
 			const privateKey = await unwrapKey(state.wrappedSigningKey, this.env.SIGNING_KEY_WRAPPING_SECRET);
 			return this.#commit(state.did, state.wrappedSigningKey, privateKey, records, { operations, previousEntries, since: state.rev, prevData: state.rootCid ?? undefined });
 		});
@@ -299,6 +301,12 @@ export class AccountRepo extends DurableObject<Env> {
 
 	async isBlobReferenced(cid: string): Promise<boolean> {
 		return Boolean(await this.#db.select().from(schema.blobRefs).where(eq(schema.blobRefs.cid, cid)).get());
+	}
+
+	cleanupBlob(cid: string): Promise<void> {
+		return this.#serialize(async () => {
+			if (!await this.isBlobReferenced(cid)) await this.env.BLOBS.delete(`blobs/${(await this.describe()).did}/${cid}`);
+		});
 	}
 
 	async listMissingBlobs(cursor?: string, limit = 500) {

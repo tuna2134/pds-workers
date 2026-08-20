@@ -27,7 +27,7 @@ export async function signJwt(claims: JwtClaims, type: TokenType, secret: string
 	return `${message}.${base64url(new Uint8Array(await crypto.subtle.sign("HMAC", await hmac(secret, ["sign"]), encoder.encode(message))))}`;
 }
 
-export async function verifyJwt(token: string, type: TokenType, secret: string): Promise<JwtClaims | null> {
+export async function verifyJwt(token: string, type: TokenType, secret: string, allowExpired = false): Promise<JwtClaims | null> {
 	try {
 		const [header, payload, signature, extra] = token.split(".");
 		if (!header || !payload || !signature || extra) return null;
@@ -38,7 +38,7 @@ export async function verifyJwt(token: string, type: TokenType, secret: string):
 		const now = Math.floor(Date.now() / 1000);
 		return typeof claims.sub === "string" && Boolean(claims.sub) && typeof claims.aud === "string" && Boolean(claims.aud) && typeof claims.scope === "string" && Boolean(claims.scope)
 			&& typeof claims.jti === "string" && Boolean(claims.jti) && Number.isSafeInteger(claims.iat) && Number.isSafeInteger(claims.exp)
-			&& claims.iat <= now + 60 && claims.exp > now && claims.exp > claims.iat ? claims : null;
+			&& claims.iat <= now + 60 && (allowExpired || claims.exp > now) && claims.exp > claims.iat ? claims : null;
 	} catch { return null; }
 }
 

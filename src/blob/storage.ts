@@ -22,8 +22,7 @@ export class BlobStorage {
 		const cid = await cidForBytes(bytes, RAW_CODEC);
 		const key = `blobs/${did}/${cid}`;
 		await this.bucket.put(key, bytes, { httpMetadata: { contentType: mimeType }, customMetadata: { uploadedAt: new Date().toISOString() } });
-		try { await this.cleanup?.send({ did, cid: cid.toString() }, { delaySeconds: 86_400 }); }
-		catch (error) { await this.bucket.delete(key); throw error; }
+		await this.cleanup?.send({ did, cid: cid.toString() }, { delaySeconds: 86_400 });
 		return { $type: "blob", ref: { $link: cid.toString() }, mimeType, size: bytes.length };
 	}
 
@@ -52,8 +51,7 @@ export class BlobStorage {
 			if (!object) throw new Error("Temporary blob upload is unavailable");
 			const key = `blobs/${did}/${cid}`;
 			await this.bucket.put(key, object.body, { httpMetadata: { contentType: mimeType }, customMetadata: { uploadedAt: new Date().toISOString() } });
-			try { await this.cleanup?.send({ did, cid: cid.toString() }, { delaySeconds: 86_400 }); }
-			catch (error) { await this.bucket.delete(key); throw error; }
+			await this.cleanup?.send({ did, cid: cid.toString() }, { delaySeconds: 86_400 });
 			return { $type: "blob", ref: { $link: cid.toString() }, mimeType, size };
 		} catch (error) {
 			await writer.abort(error).catch(() => undefined);

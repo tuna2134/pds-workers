@@ -61,7 +61,7 @@ export class OAuthStore {
 	}
 
 	async findCode(code: string, clientId: string, redirectUri: string) {
-		return this.db.select().from(oauthSessions).where(and(eq(oauthSessions.codeHash, await tokenHash(code)), eq(oauthSessions.clientId, clientId), eq(oauthSessions.redirectUri, redirectUri), isNull(oauthSessions.consumedAt), gt(oauthSessions.expiresAt, new Date()))).get();
+		return this.db.select().from(oauthSessions).where(and(eq(oauthSessions.codeHash, await tokenHash(code)), eq(oauthSessions.clientId, clientId), eq(oauthSessions.redirectUri, redirectUri), gt(oauthSessions.expiresAt, new Date()))).get();
 	}
 
 	async consumeCode(id: string, accessToken: string, refreshToken: string, expiresAt: Date) {
@@ -91,6 +91,10 @@ export class OAuthStore {
 	async revoke(token: string) {
 		const hash = await tokenHash(token);
 		await this.db.update(oauthSessions).set({ accessHash: null, refreshHash: null, updatedAt: new Date() }).where(or(eq(oauthSessions.accessHash, hash), eq(oauthSessions.refreshHash, hash)));
+	}
+
+	async revokeSession(id: string) {
+		await this.db.update(oauthSessions).set({ accessHash: null, refreshHash: null, updatedAt: new Date() }).where(eq(oauthSessions.id, id));
 	}
 
 	async recordProof(jkt: string, jti: string) {

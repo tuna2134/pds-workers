@@ -114,6 +114,11 @@ function repo(env: Env, did: string) {
 	return env.ACCOUNT_REPO.getByName(did) as unknown as AccountRepo;
 }
 
+async function publishRepoSync(env: Env, did: string, state: { commit: string; rev: string }) {
+	const target = repo(env, did);
+	await env.FIREHOSE.getByName("global").publishSync(`sync:${state.commit}`, did, state.rev, state.commit, await target.getBlocks([state.commit]));
+}
+
 async function applyRepoWrites(target: AccountRepo, writes: RepoWrite[], swapCommit?: string) {
 	try { return await target.applyWrites(writes, swapCommit); }
 	catch (error) {
@@ -519,6 +524,7 @@ export function createRouter(): XrpcRouter {
 			if (!active) throw new Error("Account activation failed");
 			await env.FIREHOSE.getByName("global").publishIdentity(`identity:${pending.did}:created`, pending.did, handle);
 			await env.FIREHOSE.getByName("global").publishAccount(`account:${pending.did}:active`, pending.did, true);
+			await publishRepoSync(env, pending.did, await repo(env, pending.did).describe());
 			await audit(context, "account.created", active.id);
 			return { ...await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(active), handle, did: pending.did, didDoc: identity.document };
 		}
@@ -558,6 +564,7 @@ export function createRouter(): XrpcRouter {
 		const firehose = env.FIREHOSE.getByName("global");
 		await firehose.publishIdentity(`identity:${did}:created`, did, handle);
 		await firehose.publishAccount(`account:${did}:active`, did, true);
+		await publishRepoSync(env, did, await repo(env, did).describe());
 		await audit(context, "account.created", active.id);
 		return { ...await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(active), handle, did, didDoc };
 	});
@@ -584,37 +591,43 @@ export function createRouter(): XrpcRouter {
 		return { ...tokens, handle: account.handle, did: account.did, ...(email ? { email: account.email, emailConfirmed: account.emailConfirmed, emailAuthFactor: account.emailAuthFactor } : {}), active: account.status === "active", status: account.status };
 	});
 	router.registerProcedure("com.atproto.server.deleteSession", async (context) => {
-		const { account, authentication, sessions } = await authenticated(context, "refresh+jwt", true);
+		const sessions = new SessionRepository(d1(context.env.DB), context.env.SESSION_JWT_SECRET, context.env.SERVICE_DID);
+		const authentication = await sessions.authenticate(bearer(context.request), "refresh+jwt", true);
+		if (!authentication) throw new XrpcError(401, "InvalidToken");
 		await sessions.revoke(authentication.session.id);
-		await audit(context, "auth.session.revoked", account.id);
+		await audit(context, "auth.session.revoked", authentication.session.accountId);
 		return new Response(null, { status: 200 });
 	});
 	router.registerProcedure("com.atproto.server.activateAccount", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);
 		accountAdmin(permissions);
-		if (account.status !== "deactivated") throw new XrpcError(400, "InvalidRequest", "Account is not deactivated");
+		if (account.status !== "deactivated" && account.status !== "active") throw new XrpcError(400, "InvalidRequest", "Account cannot be activated");
 		let document;
 		try { document = await didProvider(account.did).resolve(account.did); }
 		catch { throw new XrpcError(400, "IncompatibleDidDoc", "DID document is unavailable"); }
 		const data = extractAtprotoData(document);
-		if (data.aka?.toLowerCase() !== account.handle || data.pds?.serviceEndpoint.replace(/\/$/, "") !== context.env.PDS_URL.replace(/\/$/, "") || !data.key || `did:key:${data.key.publicKeyMultibase}` !== await repo(context.env, account.did).signingKeyDid()) throw new XrpcError(400, "IncompatibleDidDoc", "DID document does not contain this account's credentials");
+		const target = repo(context.env, account.did);
+		if (data.aka?.toLowerCase() !== account.handle || data.pds?.serviceEndpoint.replace(/\/$/, "") !== context.env.PDS_URL.replace(/\/$/, "") || !data.key || `did:key:${data.key.publicKeyMultibase}` !== await target.signingKeyDid()) throw new XrpcError(400, "IncompatibleDidDoc", "DID document does not contain this account's credentials");
 		const accounts = new AccountRepository(d1(context.env.DB));
-		await accounts.updateIdentity(account.did, document);
-		await accounts.setStatus(account.id, "active");
+		const state = account.status === "deactivated" ? await target.resign() : await target.describe();
+		if (account.status === "deactivated") { await accounts.updateIdentity(account.did, document); await accounts.setStatus(account.id, "active"); }
 		const firehose = context.env.FIREHOSE.getByName("global");
-		await firehose.publishIdentity(`identity:${account.did}:${crypto.randomUUID()}`, account.did, account.handle);
-		await firehose.publishAccount(`account:${account.did}:active:${crypto.randomUUID()}`, account.did, true);
-		await repo(context.env, account.did).resign();
+		await firehose.publishIdentity(`identity:${account.did}:active:${state.commit}`, account.did, account.handle);
+		await firehose.publishAccount(`account:${account.did}:active:${state.commit}`, account.did, true);
+		await publishRepoSync(context.env, account.did, state);
 		await audit(context, "account.activated", account.id);
 		return new Response(null, { status: 200 });
 	});
 	router.registerProcedure("com.atproto.server.deactivateAccount", async (context) => {
-		const { account, permissions } = await authenticated(context);
+		const { account, permissions } = await authenticated(context, "at+jwt", true);
 		accountAdmin(permissions);
 		const input = await jsonBody<{ deleteAfter?: string }>(context.request);
+		if (input.deleteAfter) throw new XrpcError(400, "InvalidRequest", "Scheduled deletion is not configured");
+		if (account.status !== "active" && account.status !== "deactivated") throw new XrpcError(400, "InvalidRequest", "Account cannot be deactivated");
 		await new AccountRepository(d1(context.env.DB)).setStatus(account.id, "deactivated");
-		await context.env.FIREHOSE.getByName("global").publishAccount(`account:${account.did}:deactivated:${crypto.randomUUID()}`, account.did, false, "deactivated");
-		await audit(context, "account.deactivated", account.id, input.deleteAfter ? { deleteAfter: input.deleteAfter } : undefined);
+		const commit = (await repo(context.env, account.did).describe()).commit;
+		await context.env.FIREHOSE.getByName("global").publishAccount(`account:${account.did}:deactivated:${commit}`, account.did, false, "deactivated");
+		await audit(context, "account.deactivated", account.id);
 		return new Response(null, { status: 200 });
 	});
 	router.registerProcedure("com.atproto.server.requestAccountDelete", async (context) => {
@@ -639,11 +652,11 @@ export function createRouter(): XrpcRouter {
 		const input = await jsonBody<{ did?: string; password?: string; token?: string }>(context.request);
 		if (input.did !== account.did) throw new XrpcError(400, "InvalidRequest", "DID does not match authenticated account");
 		if (!input.password || !await verifyPassword(input.password, account.passwordHash)) throw new XrpcError(401, "AuthenticationRequired", "Invalid password");
-		const verification = input.token ? await new EmailTokenRepository(d1(context.env.DB)).consume(account.id, "account-delete", input.token) : "invalid";
+		const verification = input.token ? await new EmailTokenRepository(d1(context.env.DB)).verify(account.id, "account-delete", input.token) : "invalid";
 		if (verification !== "valid") throw new XrpcError(400, verification === "expired" ? "ExpiredToken" : "InvalidToken");
 		const accounts = new AccountRepository(d1(context.env.DB));
 		await accounts.setStatus(account.id, "deactivated");
-		await context.env.FIREHOSE.getByName("global").publishAccount(`account:${account.did}:deleted:${crypto.randomUUID()}`, account.did, false, "deleted");
+		await context.env.FIREHOSE.getByName("global").publishAccount(`account:${account.did}:deleted:${account.id}`, account.did, false, "deleted");
 		await new BlobStorage(context.env.BLOBS, Number(context.env.BLOB_UPLOAD_LIMIT)).deleteAccount(account.did);
 		await repo(context.env, account.did).deleteAccount();
 		await audit(context, "account.deleted", account.id);
@@ -715,7 +728,7 @@ export function createRouter(): XrpcRouter {
 	});
 	router.registerProcedure("com.atproto.repo.putRecord", async (context) => {
 		const { account, permissions } = await authenticated(context);
-		const input = await jsonBody<{ repo?: string; collection?: string; rkey?: string; validate?: boolean; record?: Record<string, unknown>; swapRecord?: string; swapCommit?: string }>(context.request);
+		const input = await jsonBody<{ repo?: string; collection?: string; rkey?: string; validate?: boolean; record?: Record<string, unknown>; swapRecord?: string | null; swapCommit?: string }>(context.request);
 		if (!input.repo || !input.collection || !input.rkey || !input.record) throw new XrpcError(400, "InvalidRequest");
 		ownedRepo(input.repo, account);
 		if (input.record.$type !== input.collection) throw new XrpcError(400, "InvalidRequest", "record.$type must match collection");
@@ -727,16 +740,16 @@ export function createRouter(): XrpcRouter {
 		repoPermission(permissions, input.collection, existing ? "update" : "create");
 		const commit = await applyRepoWrites(target, [{ action: existing ? "update" : "create", path: `${input.collection}/${input.rkey}`, record: input.record, swapRecord: input.swapRecord }], input.swapCommit);
 		const record = await target.getRecord(`${input.collection}/${input.rkey}`);
-		return { uri: record!.uri, cid: record!.cid, commit: { cid: commit.commit, rev: commit.rev }, validationStatus };
+		return { uri: record!.uri, cid: record!.cid, ...("noop" in commit ? {} : { commit: { cid: commit.commit, rev: commit.rev } }), validationStatus };
 	});
 	router.registerProcedure("com.atproto.repo.deleteRecord", async (context) => {
 		const { account, permissions } = await authenticated(context);
-		const input = await jsonBody<{ repo?: string; collection?: string; rkey?: string; swapRecord?: string; swapCommit?: string }>(context.request);
+		const input = await jsonBody<{ repo?: string; collection?: string; rkey?: string; swapRecord?: string | null; swapCommit?: string }>(context.request);
 		if (!input.repo || !input.collection || !input.rkey) throw new XrpcError(400, "InvalidRequest");
 		ownedRepo(input.repo, account);
 		repoPermission(permissions, input.collection, "delete");
 		const commit = await applyRepoWrites(repo(context.env, account.did), [{ action: "delete", path: `${input.collection}/${input.rkey}`, swapRecord: input.swapRecord }], input.swapCommit);
-		return { commit: { cid: commit.commit, rev: commit.rev } };
+		return "noop" in commit ? {} : { commit: { cid: commit.commit, rev: commit.rev } };
 	});
 	router.registerProcedure("com.atproto.repo.applyWrites", async (context) => {
 		const { account, permissions } = await authenticated(context);
@@ -769,7 +782,7 @@ export function createRouter(): XrpcRouter {
 			const record = await target.getRecord(write.path);
 			return { $type: `com.atproto.repo.applyWrites#${write.action}Result`, uri: record!.uri, cid: record!.cid, validationStatus: validationStatuses[index] };
 		}));
-		return { commit: { cid: committed.commit, rev: committed.rev }, results };
+		return { ...("noop" in committed ? {} : { commit: { cid: committed.commit, rev: committed.rev } }), results };
 	});
 	router.registerProcedure("com.atproto.repo.uploadBlob", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);

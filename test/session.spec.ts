@@ -191,6 +191,8 @@ describe("password sessions", () => {
 		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`)).status).toBe(200);
 		const deactivated = await SELF.fetch("https://example.com/xrpc/com.atproto.server.deactivateAccount", { method: "POST", headers: { authorization: `Bearer ${accessJwt}`, "content-type": "application/json" }, body: "{}" });
 		expect(deactivated.status).toBe(200);
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.deactivateAccount", { method: "POST", headers: { authorization: `Bearer ${accessJwt}`, "content-type": "application/json" }, body: "{}" })).status).toBe(200);
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.deactivateAccount", { method: "POST", headers: { authorization: `Bearer ${accessJwt}`, "content-type": "application/json" }, body: JSON.stringify({ deleteAfter: "2026-08-22T00:00:00.000Z" }) })).status).toBe(400);
 		const unavailable = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`);
 		expect(unavailable.status).toBe(400);
 		expect(await unavailable.json()).toMatchObject({ error: "RepoDeactivated" });
@@ -299,9 +301,9 @@ describe("password sessions", () => {
 		expect(callback.searchParams.get("iss")).toBe("https://pds.example.com");
 		expect(approved.headers.get("set-cookie")).toContain("Max-Age=0");
 		const tokenNonce = par.headers.get("dpop-nonce")!;
-		const exchanges = await Promise.all([1, 2].map(async () => SELF.fetch("https://example.com/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/token", tokenNonce) }, body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code")!, client_id: clientId, redirect_uri: redirectUri, code_verifier: verifier }) })));
-		expect(exchanges.map(({ status }) => status).sort()).toEqual([200, 400]);
-		const token = exchanges.find(({ status }) => status === 200)!;
+		const codeExchange = new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code")!, client_id: clientId, redirect_uri: redirectUri, code_verifier: verifier });
+		const token = await SELF.fetch("https://example.com/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/token", tokenNonce) }, body: codeExchange });
+		expect(token.status).toBe(200);
 		const tokens = await token.json<{ access_token: string; refresh_token: string }>();
 		expect(tokens).toMatchObject({ token_type: "DPoP", sub: did, scope: requestedScope, access_token: expect.any(String), refresh_token: expect.any(String) });
 		const oauthStore = new OAuthStore(d1(env.DB));
@@ -323,6 +325,10 @@ describe("password sessions", () => {
 		const denied = await write("app.bsky.feed.like", allowed.headers.get("dpop-nonce")!);
 		expect(denied.status).toBe(403);
 		expect(await denied.json()).toMatchObject({ error: "AuthScopeMismatch" });
+		const replay = await SELF.fetch("https://example.com/oauth/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/token", denied.headers.get("dpop-nonce")!) }, body: codeExchange });
+		expect(replay.status).toBe(400);
+		expect(await replay.json()).toMatchObject({ error: "invalid_grant" });
+		expect(await oauthStore.findAccess(tokens.access_token)).toBeUndefined();
 		const revoke = await SELF.fetch("https://example.com/oauth/revoke", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", dpop: await dpop(pair, jwk, "POST", "https://pds.example.com/oauth/revoke", denied.headers.get("dpop-nonce")!) }, body: new URLSearchParams({ token: tokens.refresh_token, client_id: clientId }) });
 		expect(revoke.status).toBe(200);
 		expect(revoke.headers.get("access-control-allow-origin")).toBe("*");
@@ -413,6 +419,14 @@ describe("password sessions", () => {
 		expect(created.status).toBe(200);
 		const createdPost = await created.json<{ uri: string; cid: string }>();
 		expect(createdPost).toMatchObject({ uri: `at://${did}/app.bsky.feed.post/auth` });
+		const absentSwap = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.putRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", rkey: "auth", validate: false, swapRecord: null, record: { $type: "app.bsky.feed.post", text: "authenticated", image: blob } }) });
+		expect(absentSwap.status).toBe(400);
+		expect(await absentSwap.json()).toMatchObject({ error: "InvalidSwap" });
+		const noopPut = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.putRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", rkey: "auth", validate: false, record: { $type: "app.bsky.feed.post", text: "authenticated", image: blob } }) });
+		expect(await noopPut.json()).not.toHaveProperty("commit");
+		const noopDelete = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.deleteRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.post", rkey: "missing" }) });
+		expect(noopDelete.status).toBe(200);
+		expect(await noopDelete.json()).toEqual({});
 		const liked = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.createRecord", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tokens.accessJwt}` }, body: JSON.stringify({ repo: did, collection: "app.bsky.feed.like", record: { $type: "app.bsky.feed.like", subject: { uri: createdPost.uri, cid: createdPost.cid }, createdAt: new Date().toISOString() } }) });
 		expect(liked.status, await liked.clone().text()).toBe(200);
 		const likedRecord = await liked.json<{ uri: string }>();
