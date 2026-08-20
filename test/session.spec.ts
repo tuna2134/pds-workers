@@ -42,6 +42,13 @@ beforeEach(() => applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS));
 afterEach(() => fetchMock.deactivate());
 
 describe("password sessions", () => {
+	it("rejects invalid account email addresses before creating identity state", async () => {
+		const response = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle: "invalid-email.localhost", email: "not-an-email", password: "a secure account password" }) });
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error: "InvalidEmail" });
+		expect(await new AccountRepository(d1(env.DB)).find("invalid-email.localhost")).toBeUndefined();
+	});
+
 	it("confirms email ownership and protects changes to a confirmed address", async () => {
 		const did = "did:plc:emailconfirmation";
 		const account = await new AccountRepository(d1(env.DB)).create({ did, handle: "email.localhost", email: "old@example.com", passwordHash: await hashPassword("a secure email password") });

@@ -7,6 +7,7 @@ import migrations from "../db/firehose-migrations";
 import * as schema from "../db/schema/firehose";
 import { streamError, streamFrame } from "../sync/frame";
 import { decodeCar, encodeCar } from "../repo/car";
+import { notifyCrawlers } from "../sync/crawler";
 
 const RETAIN_EVENTS = 10_000;
 
@@ -54,11 +55,17 @@ export class Firehose extends DurableObject<Env> {
 	}
 
 	publishIdentity(id: string, did: string, handle?: string): Promise<number> {
-		return this.#serialize(() => this.#publish(id, "#identity", (seq) => ({ seq, did, time: new Date().toISOString(), ...(handle ? { handle } : {}) })));
+		return this.#publishAndNotify(() => this.#serialize(() => this.#publish(id, "#identity", (seq) => ({ seq, did, time: new Date().toISOString(), ...(handle ? { handle } : {}) }))));
 	}
 
 	publishAccount(id: string, did: string, active: boolean, status?: string): Promise<number> {
-		return this.#serialize(() => this.#publish(id, "#account", (seq) => ({ seq, did, time: new Date().toISOString(), active, ...(status ? { status } : {}) })));
+		return this.#publishAndNotify(() => this.#serialize(() => this.#publish(id, "#account", (seq) => ({ seq, did, time: new Date().toISOString(), active, ...(status ? { status } : {}) }))));
+	}
+
+	async #publishAndNotify(publish: () => Promise<number>): Promise<number> {
+		const seq = await publish();
+		this.ctx.waitUntil(notifyCrawlers(this.env.CRAWLERS, this.env.PDS_URL).catch((error) => console.error(JSON.stringify({ error: error instanceof Error ? error.message : "Crawler notification failed" }))));
+		return seq;
 	}
 
 	pitrBookmark(at?: number) {
@@ -84,6 +91,7 @@ export class Firehose extends DurableObject<Env> {
 		for (const socket of this.ctx.getWebSockets()) {
 			try { socket.send(frame); } catch { socket.close(1008, "ConsumerTooSlow"); }
 		}
+		console.log(JSON.stringify({ event: "firehose.publish", type, seq, ...(type === "#commit" || type === "#sync" ? { commit: id } : {}) }));
 		return seq;
 	}
 

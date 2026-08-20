@@ -432,6 +432,7 @@ export function createRouter(): XrpcRouter {
 		if (!input.handle || !input.email || !input.password) throw new XrpcError(400, "InvalidRequest", "handle, email, and password are required");
 		if (input.password.length < 12) throw new XrpcError(400, "InvalidPassword", "Password must contain at least 12 characters");
 		if (input.recoveryKey || input.plcOp) throw new XrpcError(400, "InvalidRequest", "recoveryKey and plcOp are not supported by this PDS flow");
+		const email = emailAddress(input.email);
 		const allowed = JSON.parse(env.AVAILABLE_USER_DOMAINS) as string[];
 		let handle: string;
 		try { handle = normalizeHandle(input.handle); } catch { throw new XrpcError(400, "InvalidHandle"); }
@@ -440,7 +441,6 @@ export function createRouter(): XrpcRouter {
 		if (!rate.success) throw new XrpcError(429, "RateLimitExceeded");
 		const database = d1(env.DB);
 		const accounts = new AccountRepository(database);
-		const email = input.email.toLowerCase();
 		const [handleAccount, emailAccount] = await Promise.all([accounts.find(handle), accounts.find(email)]);
 		if (handleAccount || emailAccount) {
 			const pending = handleAccount?.id === emailAccount?.id && handleAccount?.status === "pending" ? handleAccount : undefined;
@@ -700,7 +700,8 @@ export function createRouter(): XrpcRouter {
 	});
 	router.registerProcedure("com.atproto.repo.uploadBlob", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);
-		if (permissions && !permissions.allowsBlob({ mime: context.request.headers.get("content-type") ?? "application/octet-stream" })) throw new XrpcError(403, "AuthScopeMismatch", "Missing blob upload permission");
+		const mime = (context.request.headers.get("content-type") ?? "application/octet-stream").split(";", 1)[0].trim().toLowerCase();
+		if (permissions && !permissions.allowsBlob({ mime })) throw new XrpcError(403, "AuthScopeMismatch", "Missing blob upload permission");
 		try { return { blob: await new BlobStorage(context.env.BLOBS, Number(context.env.BLOB_UPLOAD_LIMIT), context.env.BLOB_CLEANUP).upload(account.did, context.request) }; }
 		catch (error) {
 			if (error instanceof RangeError) throw new XrpcError(413, "BlobTooLarge", error.message);

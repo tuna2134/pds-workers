@@ -5,6 +5,7 @@ interface Env {
 	BLOB_UPLOAD_LIMIT: string;
 	SESSION_JWT_SECRET: string;
 	PDS_URL: string;
+	CRAWLERS: string;
 	PLC_DIRECTORY: string;
 	EMAIL_FROM: string;
 	EMAIL: SendEmail;

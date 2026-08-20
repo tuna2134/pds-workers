@@ -34,5 +34,8 @@ describe("PDS admin XRPC", () => {
 		});
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({ error: "InvalidRequest" });
+		const headers = { authorization: "Bearer a-secure-admin-test-secret-value", "content-type": "application/json" };
+		expect((await SELF.fetch(endpoint, { method: "POST", headers, body: "{" })).status).toBe(400);
+		expect((await SELF.fetch(endpoint, { method: "POST", headers, body: "x".repeat(2_049) })).status).toBe(413);
 	});
 });

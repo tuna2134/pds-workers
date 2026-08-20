@@ -61,7 +61,7 @@ npx wrangler secret put SESSION_JWT_SECRET
 npx wrangler secret put ADMIN_PASSWORD
 ```
 
-`PDS_URL` は公開HTTPS origin、`SERVICE_DID` はサービスDID、`PLC_DIRECTORY` は通常 `https://plc.directory`、`AVAILABLE_USER_DOMAINS` はJSON配列に設定します。具体的な手順は [deployment](docs/deployment.md) にあります。
+`PDS_URL` は公開HTTPS origin、`SERVICE_DID` はサービスDID、`PLC_DIRECTORY` は通常 `https://plc.directory`、`AVAILABLE_USER_DOMAINS` と `CRAWLERS` はJSON配列に設定します。`CRAWLERS` の各Relayにはrepo commit後、非同期で `requestCrawl` を送ります。具体的な手順は [deployment](docs/deployment.md) にあります。
 
 ## Database migrations
 
@@ -115,7 +115,7 @@ curl -sS "$PDS_URL/xrpc/com.atproto.server.createAccount" \
 - `AVAILABLE_USER_DOMAINS=[".users.example.com"]`
 - `did:web` service documentとPLC documentのPDS endpointが同じ公開originを指すことを確認
 
-Cloudflare zone、custom domain、TLS設定は [deployment](docs/deployment.md) を参照してください。
+DNSレコードはCloudflare DNS側でproxiedとして管理し、Wranglerには `zone_name` 付きの通常Routeを設定します。Custom DomainはDNSを自動管理しwildcardにも非対応なので、この構成では使いません。詳細は [deployment](docs/deployment.md) を参照してください。
 
 ## Account migration
 
@@ -154,12 +154,13 @@ goat repo mst /tmp/repo.car
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **BLOCKED:** 実Relay/`atproto-tap`によるfederationとfirehose downstream検証は未実施。Goatでは公開handle解決、レコード取得、CARのinspect/MST確認まで実施済み。
+- **BLOCKED:** `bsky.network` Relay への crawl 要求と `indigo-relay` からの `describeServer` 到達までは確認済み。commit後の自動 `requestCrawl` も実装済みだが、Relay の `accountCount` が 0、`seq` が -1 のため、認証済みの本番書き込みと同一 commit event の Relay 到達確認が残っています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
 - Workers標準WebCryptoのPBKDF2-SHA256（Workersの上限である100,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
+- 本番 `BLOB_UPLOAD_LIMIT` は50 MBです。現行 `app.bsky.embed.video` Lexiconの最大300 MBを満たさないため、大容量video uploadは未対応です。Cloudflare Free/Proのrequest body上限は100 MBなので、完全対応には上位planまたは別upload経路が必要です。
 - PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
 - `wrangler.jsonc` のexample valuesは本番値ではありません。

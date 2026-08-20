@@ -13,7 +13,9 @@ function decode(value: string): Uint8Array {
 }
 
 async function hmac(secret: string, usage: ("sign" | "verify")[]): Promise<CryptoKey> {
-	return crypto.subtle.importKey("raw", decode(secret), { name: "HMAC", hash: "SHA-256" }, false, usage);
+	const bytes = decode(secret);
+	if (bytes.length < 32) throw new TypeError("JWT secret must contain at least 32 bytes");
+	return crypto.subtle.importKey("raw", bytes, { name: "HMAC", hash: "SHA-256" }, false, usage);
 }
 
 export interface JwtClaims { sub: string; aud: string; scope: string; iat: number; exp: number; jti: string }
@@ -33,7 +35,10 @@ export async function verifyJwt(token: string, type: TokenType, secret: string):
 		if (parsedHeader.alg !== "HS256" || parsedHeader.typ !== type) return null;
 		if (!await crypto.subtle.verify("HMAC", await hmac(secret, ["verify"]), decode(signature), encoder.encode(`${header}.${payload}`))) return null;
 		const claims = JSON.parse(new TextDecoder().decode(decode(payload))) as JwtClaims;
-		return claims.exp > Math.floor(Date.now() / 1000) && typeof claims.sub === "string" && typeof claims.jti === "string" ? claims : null;
+		const now = Math.floor(Date.now() / 1000);
+		return typeof claims.sub === "string" && Boolean(claims.sub) && typeof claims.aud === "string" && Boolean(claims.aud) && typeof claims.scope === "string" && Boolean(claims.scope)
+			&& typeof claims.jti === "string" && Boolean(claims.jti) && Number.isSafeInteger(claims.iat) && Number.isSafeInteger(claims.exp)
+			&& claims.iat <= now + 60 && claims.exp > now && claims.exp > claims.iat ? claims : null;
 	} catch { return null; }
 }
 

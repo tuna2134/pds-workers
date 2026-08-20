@@ -25,6 +25,7 @@ import { XrpcError, xrpcErrorResponse } from "./xrpc/errors";
 import { validDid } from "./identity/did";
 import { AuditRepository } from "./db/audit";
 import { tokenHash } from "./crypto/jwt";
+import { readBody } from "./utils/body";
 
 const router = createRouter();
 
@@ -49,9 +50,12 @@ async function adminPitr(request: Request, env: Env) {
 		}
 		if (request.method !== "POST") throw new XrpcError(405, "MethodNotAllowed");
 		if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new XrpcError(400, "InvalidRequest", "Content-Type must be application/json");
-		const bytes = new Uint8Array(await request.arrayBuffer());
-		if (bytes.length > 2_048) throw new XrpcError(413, "PayloadTooLarge");
-		const { bookmark } = JSON.parse(new TextDecoder().decode(bytes)) as { bookmark?: string };
+		let bookmark: string | undefined;
+		try { ({ bookmark } = JSON.parse(new TextDecoder().decode(await readBody(request, 2_048))) as { bookmark?: string }); }
+		catch (error) {
+			if (error instanceof RangeError) throw new XrpcError(413, "PayloadTooLarge");
+			throw new XrpcError(400, "InvalidRequest", "Invalid JSON body");
+		}
 		if (!bookmark || bookmark.length > 256 || !/^[A-Za-z0-9_-]+$/.test(bookmark) || request.headers.get("x-confirm-restore") !== bookmark) throw new XrpcError(400, "InvalidRequest", "x-confirm-restore must exactly match a valid bookmark");
 		const undoBookmark = await target.schedulePitrRestore(bookmark);
 		await new AuditRepository(d1(env.DB)).record({ action: "admin.pitr.scheduled", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(), ipHash: await tokenHash(request.headers.get("cf-connecting-ip") ?? "unknown"), detail: { kind: url.searchParams.get("kind"), did: url.searchParams.get("did"), bookmark, undoBookmark } });

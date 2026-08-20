@@ -19,6 +19,7 @@ import { isValidNsid, isValidRecordKey } from "@atproto/syntax";
 import { jsonToLex } from "@atproto/lex";
 import { BlockMap, MemoryBlockstore, Repo, readCarWithRoot, verifyDiff } from "@atproto/repo";
 import { formatDidKey } from "@atproto/crypto";
+import { notifyCrawlers } from "../sync/crawler";
 
 export type RepoWrite =
 	| { action: "create" | "update"; path: string; record: Record<string, unknown>; swapRecord?: string }
@@ -326,6 +327,7 @@ export class AccountRepo extends DurableObject<Env> {
 		});
 		await Promise.all(previousReferences.filter((cid) => !references.some((reference) => reference.cid === cid)).map((cid) => this.env.BLOBS.delete(`blobs/${did}/${cid}`)));
 		const seq = await this.#flushOutbox(event.id);
+		this.ctx.waitUntil(notifyCrawlers(this.env.CRAWLERS, this.env.PDS_URL).catch((error) => console.error(JSON.stringify({ did, commit: commit.cid.toString(), error: error instanceof Error ? error.message : "Crawler notification failed" }))));
 		return { did, rev, commit: commit.cid.toString(), root: tree.root.toString(), seq };
 	}
 

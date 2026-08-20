@@ -6,6 +6,8 @@ Global account state belongs in D1. `AccountRepository`, `SessionRepository`, an
 
 `Firehose` owns the global monotonically increasing sequence. It stores encoded event-stream frames before broadcasting them through the Durable Objects WebSocket Hibernation API. Backfill follows the Event Stream specification and replays events with `seq >= cursor`; retained history is currently capped at 10,000 frames.
 
+Worker logs are structured JSON: XRPC/proxy requests include request ID, NSID, status, and duration; Firehose publication includes event type and sequence, plus commit CID for repository events. Credentials, tokens, cookies, and private keys are never logged.
+
 R2 keys are `blobs/{did}/{raw-cid}`. Upload computes the raw CID from bytes. Download first asks the account DO whether the CID is referenced, preventing temporary uploads from becoming public. A delayed Queue message removes uploads that are still unreferenced after 24 hours; failed cleanup messages go to a DLQ.
 
 Failure boundaries:

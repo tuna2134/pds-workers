@@ -14,5 +14,8 @@ describe("authentication primitives", () => {
 		const access = await signJwt(claims, "at+jwt", secret);
 		expect(await verifyJwt(access, "at+jwt", secret)).toMatchObject(claims);
 		expect(await verifyJwt(access, "refresh+jwt", secret)).toBeNull();
+		const malformed = await signJwt({ ...claims, scope: 1 } as unknown as typeof claims, "at+jwt", secret);
+		expect(await verifyJwt(malformed, "at+jwt", secret)).toBeNull();
+		await expect(signJwt(claims, "at+jwt", "c2hvcnQ")).rejects.toThrow("at least 32 bytes");
 	});
 });

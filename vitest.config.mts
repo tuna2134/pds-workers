@@ -13,6 +13,7 @@ export default defineWorkersConfig({
 					SERVICE_DID: "did:web:localhost",
 					AVAILABLE_USER_DOMAINS: "[\".localhost\"]",
 					PDS_URL: "https://pds.example.com",
+					CRAWLERS: "[]",
 					SIGNING_KEY_WRAPPING_SECRET: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 					SESSION_JWT_SECRET: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
 					ADMIN_PASSWORD: "a-secure-admin-test-secret-value",

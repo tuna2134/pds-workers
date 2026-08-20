@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decodeDagCbor, encodeDagCbor } from "../src/repo/dag-cbor";
 import { encodeBlock } from "../src/repo/cid";
 import { decodeCar, encodeCar } from "../src/repo/car";
+import { commit as commitSchema } from "../src/lexicon/generated/com/atproto/sync/subscribeRepos.defs";
 
 function nextFrame(socket: WebSocket): Promise<Uint8Array> {
 	return new Promise((resolve, reject) => {
@@ -52,6 +53,9 @@ describe("subscribeRepos", () => {
 		expect(live.header).toEqual({ op: 1, t: "#commit" });
 		expect(live.payload).toMatchObject({ seq: commit.seq, repo: did, rev: commit.rev, tooBig: false, rebase: false });
 		expect((live.payload.blocks as Uint8Array).length).toBeGreaterThan(100);
+		expect(commitSchema.safeParse(live.payload).success).toBe(true);
+		const diff = await decodeCar(live.payload.blocks as Uint8Array);
+		expect(diff.roots[0].toString()).toBe(String(live.payload.commit));
 		socket.close(1000, "done");
 		const nextCommit = await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/firehose-next", record: { $type: "app.bsky.feed.post", text: "next event" } }]);
 
