@@ -47,6 +47,23 @@ describe("AccountRepo", () => {
 		expect(await repo.listRecords("app.bsky.feed.post")).toHaveLength(40);
 	});
 
+	it("compacts unreachable history while preserving current and recent sync", async () => {
+		const did = "did:plc:compactrepo";
+		const repo = env.ACCOUNT_REPO.getByName(did);
+		await repo.initialize(did);
+		const first = await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/one", record: { $type: "app.bsky.feed.post", text: "one" } }]);
+		const second = await repo.applyWrites([{ action: "update", path: "app.bsky.feed.post/one", record: { $type: "app.bsky.feed.post", text: "two" } }]);
+		const latest = await repo.applyWrites([{ action: "update", path: "app.bsky.feed.post/one", record: { $type: "app.bsky.feed.post", text: "three" } }]);
+		const before = await repo.status();
+		const compacted = await repo.compact(2);
+		expect(compacted.deletedCommits).toBe(2);
+		expect(compacted.deletedBlocks).toBeGreaterThan(0);
+		expect((await repo.status()).repoBlocks).toBeLessThan(before.repoBlocks);
+		expect(await repo.getRecord("app.bsky.feed.post/one")).toMatchObject({ value: { text: "three" } });
+		expect((await decodeCar(await repo.exportRepo(second.rev))).roots[0].toString()).toBe(latest.commit);
+		expect((await decodeCar(await repo.exportRepo(first.rev))).blocks.length).toBeGreaterThan(2);
+	});
+
 	it("cleans only orphaned blob uploads", async () => {
 		const did = "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb";
 		const repo = env.ACCOUNT_REPO.getByName(did);

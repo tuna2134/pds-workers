@@ -1,7 +1,7 @@
 import { CID } from "multiformats/cid";
 import { sha256 } from "multiformats/hashes/sha2";
 import { encodeBlock } from "../cid";
-import * as dagCbor from "@ipld/dag-cbor";
+import { decodeDagCbor } from "../dag-cbor";
 
 export interface MstEntry { key: string; value: CID }
 export interface Block { cid: CID; bytes: Uint8Array }
@@ -87,7 +87,7 @@ export async function deserializeMst(root: CID, source: Iterable<Block>): Promis
         if (!block) throw new TypeError(`Missing MST block: ${id}`);
         if (block.bytes.length > MAX_NODE_BYTES) throw new RangeError("MST node exceeds size limit");
 		let value: unknown;
-		try { value = dagCbor.decode(block.bytes); } catch { throw new TypeError("Malformed MST block"); }
+		try { value = decodeDagCbor(block.bytes); } catch { throw new TypeError("Malformed MST block"); }
 		const canonical = await encodeBlock(value);
 		if (!canonical.cid.equals(cid) || !bytesEqual(canonical.bytes, block.bytes)) throw new TypeError("Non-canonical or CID-mismatched MST block");
 		if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Malformed MST node");

@@ -1,8 +1,8 @@
-import * as dagCbor from "@ipld/dag-cbor";
+import * as cbor from "@atproto/lex-cbor";
 import { CID } from "multiformats/cid";
 
-export const encodeDagCbor = dagCbor.encode;
-export const decodeDagCbor = dagCbor.decode;
+export const encodeDagCbor = (value: unknown) => cbor.encode(value as Parameters<typeof cbor.encode>[0]);
+export const decodeDagCbor = <T = unknown>(bytes: Uint8Array) => cbor.decode(bytes) as T;
 
 export function jsonToIpld(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(jsonToIpld);

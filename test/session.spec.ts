@@ -1,4 +1,4 @@
-import { applyD1Migrations, env, fetchMock, SELF } from "cloudflare:test";
+import { applyD1Migrations, env, reset, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword } from "../src/auth/password";
 import { AccountRepository } from "../src/db/accounts";
@@ -12,6 +12,7 @@ import { buildRepoCommit } from "../src/repo/update";
 import { formatTid } from "../src/repo/tid";
 import * as dagCbor from "@ipld/dag-cbor";
 import { EmailTokenRepository } from "../src/auth/email-token";
+import { fetchMock } from "./fetch-mock";
 
 function b64(value: object | Uint8Array) { return Buffer.from(value instanceof Uint8Array ? value : new TextEncoder().encode(JSON.stringify(value))).toString("base64url"); }
 
@@ -39,7 +40,7 @@ function serviceJwt(key: Uint8Array, did: string) {
 }
 
 beforeEach(() => applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS));
-afterEach(() => fetchMock.deactivate());
+afterEach(async () => { fetchMock.deactivate(); await reset(); });
 
 describe("password sessions", () => {
 	it("rejects invalid account email addresses before creating identity state", async () => {
@@ -423,7 +424,7 @@ describe("password sessions", () => {
 		fetchMock.get("https://api.example").intercept({ method: "GET", path: "/xrpc/app.example.getThing?value=1", headers: { authorization: /^Bearer /, "atproto-accept-labelers": "did:plc:labeler" } }).reply(200, JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "atproto-content-labelers": "did:plc:labeler" } });
 		fetchMock.get("https://api.example").intercept({ method: "GET", path: `/xrpc/app.bsky.feed.getAuthorFeed?actor=${did}`, headers: { authorization: /^Bearer / } }).reply((options) => {
 			const authorization = new Headers(options.headers as HeadersInit).get("authorization")!;
-			expect(JSON.parse(Buffer.from(authorization.slice(7).split(".")[1], "base64url").toString())).toMatchObject({ aud: "did:web:api.example", lxm: "app.bsky.feed.getAuthorFeed" });
+			expect(JSON.parse(Buffer.from(authorization.slice(7).split(".")[1], "base64url").toString())).toMatchObject({ aud: audience, lxm: "app.bsky.feed.getAuthorFeed" });
 			return { statusCode: 200, data: JSON.stringify({ feed: [{ post: { viewer: { like: "at://viewer/like/1" } } }] }), responseOptions: { headers: { "content-type": "application/json" } } };
 		});
 		const response = await SELF.fetch("https://example.com/xrpc/app.example.getThing?value=1", { headers: { authorization: `Bearer ${accessJwt}`, "atproto-proxy": audience, "atproto-accept-labelers": "did:plc:labeler" } });

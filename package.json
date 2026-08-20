@@ -7,7 +7,7 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"test": "pnpm test:unit && pnpm test:integration",
-		"test:unit": "vitest run test/unit --pool=forks",
+		"test:unit": "vitest run test/unit --config vitest.unit.config.mts --pool=forks",
 		"test:integration": "vitest run test/*.spec.ts",
 		"typecheck": "tsc",
 		"lint": "eslint src test",
@@ -20,7 +20,7 @@
 		"lex:generate": "lex build --lexicons ./lexicons --out ./src/lexicon/generated --clear --index-file"
 	},
 	"devDependencies": {
-		"@cloudflare/vitest-pool-workers": "^0.12.4",
+		"@cloudflare/vitest-pool-workers": "^0.22.0",
 		"@eslint/js": "^10.0.1",
 		"@types/node": "^26.2.0",
 		"drizzle-kit": "^0.31.10",
@@ -28,8 +28,8 @@
 		"prettier": "^3.9.6",
 		"typescript": "^5.5.2",
 		"typescript-eslint": "^8.67.0",
-		"vitest": "~3.2.0",
-		"wrangler": "^4.123.0"
+		"vitest": "~4.1.11",
+		"wrangler": "^4.124.0"
 	},
 	"dependencies": {
 		"@atproto/crypto": "^0.5.4",

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { count, countDistinct, eq, inArray } from "drizzle-orm";
+import { count, countDistinct, desc, eq, inArray, lt } from "drizzle-orm";
 import { drizzle, type DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -25,6 +25,9 @@ export type RepoWrite =
 	| { action: "create" | "update"; path: string; record: Record<string, unknown>; swapRecord?: string }
 	| { action: "delete"; path: string; swapRecord?: string };
 
+const COMMIT_RETENTION = 1_000;
+const COMPACTION_TRIGGER = 1_100;
+
 function validPath(path: string) {
 	const [collection, rkey, extra] = path.split("/");
 	return !extra && isValidNsid(collection) && isValidRecordKey(rkey);
@@ -48,7 +51,11 @@ export class AccountRepo extends DurableObject<Env> {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.#db = drizzle(ctx.storage, { schema });
-		ctx.blockConcurrencyWhile(() => migrate(this.#db, migrations));
+		ctx.blockConcurrencyWhile(async () => {
+			await migrate(this.#db, migrations);
+			const state = await this.#db.select({ rev: schema.repoState.rev }).from(schema.repoState).get();
+			if (state?.rev) await this.#db.update(schema.blocks).set({ lastSeenRev: state.rev }).where(eq(schema.blocks.lastSeenRev, ""));
+		});
 	}
 
 	async initialize(did: string, suppliedPrivateKey?: Uint8Array) {
@@ -226,6 +233,10 @@ export class AccountRepo extends DurableObject<Env> {
 		return { ...state, repoBlocks: repoBlocks!.value, indexedRecords: indexedRecords!.value, expectedBlobs: expectedBlobs!.value };
 	}
 
+	compact(retain = COMMIT_RETENTION) {
+		return this.#serialize(() => this.#compact(retain));
+	}
+
 	async exportRepo(since?: string): Promise<Uint8Array> {
 		const state = await this.describe();
 		const rows = await this.#db.select().from(schema.records).all();
@@ -342,15 +353,34 @@ export class AccountRepo extends DurableObject<Env> {
 			await tx.delete(schema.blobRefs);
 			for (const batch of chunks(entries.map(([path, record]) => ({ path, cid: record.cid.toString(), bytes: Buffer.from(record.bytes) })), 25)) await tx.insert(schema.records).values(batch);
 			for (const batch of chunks(references, 25)) await tx.insert(schema.blobRefs).values(batch);
-			for (const batch of chunks([commit, ...tree.blocks, ...entries.map(([, record]) => record)].map((block) => ({ cid: block.cid.toString(), bytes: Buffer.from(block.bytes), createdAt: now })), 25)) await tx.insert(schema.blocks).values(batch).onConflictDoNothing();
+			for (const batch of chunks([commit, ...tree.blocks, ...entries.map(([, record]) => record)].map((block) => ({ cid: block.cid.toString(), bytes: Buffer.from(block.bytes), createdAt: now, lastSeenRev: rev })), 24)) await tx.insert(schema.blocks).values(batch).onConflictDoUpdate({ target: schema.blocks.cid, set: { lastSeenRev: rev } });
 			await tx.insert(schema.commits).values({ rev, cid: commit.cid.toString(), rootCid: tree.root.toString(), bytes: Buffer.from(commit.bytes), createdAt: now });
 			await tx.insert(schema.repoState).values({ id: 1, did, rev, rootCid: tree.root.toString(), commitCid: commit.cid.toString(), wrappedSigningKey }).onConflictDoUpdate({ target: schema.repoState.id, set: { rev, rootCid: tree.root.toString(), commitCid: commit.cid.toString() } });
 			await tx.insert(schema.firehoseOutbox).values({ id: event.id, payload: Buffer.from(encodeDagCbor(event)), createdAt: now });
 		});
+		if ((await this.#db.select({ value: count() }).from(schema.commits).get())!.value > COMPACTION_TRIGGER) await this.#compact(COMMIT_RETENTION);
 		await Promise.all(previousReferences.filter((cid) => !references.some((reference) => reference.cid === cid)).map((cid) => this.env.BLOBS.delete(`blobs/${did}/${cid}`)));
 		const seq = await this.#flushOutbox(event.id);
 		this.ctx.waitUntil(notifyCrawlers(this.env.CRAWLERS, this.env.PDS_URL).catch((error) => console.error(JSON.stringify({ did, commit: commit.cid.toString(), error: error instanceof Error ? error.message : "Crawler notification failed" }))));
 		return { did, rev, commit: commit.cid.toString(), root: tree.root.toString(), seq };
+	}
+
+	async #compact(retain: number) {
+		if (!Number.isInteger(retain) || retain < 1 || retain > 10_000) throw new RangeError("retain must be between 1 and 10000");
+		const before = await this.#db.select({ commits: count() }).from(schema.commits).get();
+		if (before!.commits <= retain) return { deletedCommits: 0, deletedBlocks: 0 };
+		const cutoff = await this.#db.select({ rev: schema.commits.rev }).from(schema.commits).orderBy(desc(schema.commits.rev)).limit(1).offset(retain - 1).get();
+		if (!cutoff) return { deletedCommits: 0, deletedBlocks: 0 };
+		const blocksBefore = await this.#db.select({ value: count() }).from(schema.blocks).get();
+		await this.#db.transaction(async (tx) => {
+			await tx.delete(schema.blocks).where(lt(schema.blocks.lastSeenRev, cutoff.rev));
+			await tx.delete(schema.commits).where(lt(schema.commits.rev, cutoff.rev));
+		});
+		const [commitsAfter, blocksAfter] = await Promise.all([
+			this.#db.select({ value: count() }).from(schema.commits).get(),
+			this.#db.select({ value: count() }).from(schema.blocks).get(),
+		]);
+		return { deletedCommits: before!.commits - commitsAfter!.value, deletedBlocks: blocksBefore!.value - blocksAfter!.value };
 	}
 
 	async #flushOutbox(wantedId?: string): Promise<number | null> {

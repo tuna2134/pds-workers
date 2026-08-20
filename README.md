@@ -153,8 +153,9 @@ goat repo mst /tmp/repo.car
 ## Known limitations / BLOCKED
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
+- **検証済み:** Vitest 4.1 / Cloudflare Workers test integration 0.22の現行runtime (`workerd 1.20260815.1`) でunit 26件・Workers integration 31件が成功し、`compatibility_date = 2026-08-15` と同じruntimeで検証しています。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 27` として同期し、実PLCアカウントをrevision `3mtj4ewndm2ne` まで取得しています。同revisionの本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、seq 27のprofile更新を復元できています。
+- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 32` として同期し、実PLCアカウントをrevision `3mtj653g34cl2` まで取得しています。同revisionの33-record本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、commitを復元できています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
 - **BLOCKED:** `pds-workers-blobs` は存在しますが、現在 R2 bucket lock rule が未設定です。保持日数はアカウント削除・blob cleanup の挙動を変えるため、運用方針を決めてから設定してください。

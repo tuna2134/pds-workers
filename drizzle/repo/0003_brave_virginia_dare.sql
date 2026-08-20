@@ -1,0 +1,1 @@
+ALTER TABLE `blocks` ADD `last_seen_rev` text DEFAULT '' NOT NULL;

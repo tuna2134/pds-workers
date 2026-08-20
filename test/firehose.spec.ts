@@ -25,6 +25,7 @@ describe("subscribeRepos", () => {
 		const firehose = env.FIREHOSE.getByName("global");
 		const subscription = await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos", { headers: { upgrade: "websocket" } });
 		const socket = subscription.webSocket!;
+		socket.binaryType = "arraybuffer";
 		socket.accept();
 		const identityFrame = nextFrame(socket);
 		const identitySeq = await firehose.publishIdentity("identity:test", "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", "alice.example.com");
@@ -46,6 +47,7 @@ describe("subscribeRepos", () => {
 		const subscription = await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos", { headers: { upgrade: "websocket" } });
 		expect(subscription.status).toBe(101);
 		const socket = subscription.webSocket!;
+		socket.binaryType = "arraybuffer";
 		socket.accept();
 		const incoming = nextFrame(socket);
 		const commit = await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/firehose", record: { $type: "app.bsky.feed.post", text: "event" } }]);
@@ -61,6 +63,7 @@ describe("subscribeRepos", () => {
 
 		const resumed = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.subscribeRepos?cursor=${commit.seq}`, { headers: { upgrade: "websocket" } });
 		const resumedSocket = resumed.webSocket!;
+		resumedSocket.binaryType = "arraybuffer";
 		resumedSocket.accept();
 		const replay = decodeFrame(await nextFrame(resumedSocket));
 		expect(replay.payload.seq).toBe(nextCommit.seq);
@@ -71,6 +74,7 @@ describe("subscribeRepos", () => {
 		const firehose = env.FIREHOSE.getByName("global");
 		const subscription = await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos", { headers: { upgrade: "websocket" } });
 		const socket = subscription.webSocket!;
+		socket.binaryType = "arraybuffer";
 		socket.accept();
 		const incoming = nextFrame(socket);
 		const commit = await encodeBlock({ did: "did:plc:aaaaaaaaaaaaaaaaaaaaaaaa", rev: "3m2zfcijpj22a", data: null, sig: new Uint8Array() });
@@ -93,6 +97,7 @@ describe("subscribeRepos", () => {
 			firehose.publishIdentity("race:next", did),
 		]);
 		const socket = subscription.webSocket!;
+		socket.binaryType = "arraybuffer";
 		socket.accept();
 		const headerLength = encodeDagCbor({ op: 1, t: "#identity" }).length;
 		const sequences = [decodeDagCbor<{ seq: number }>((await nextFrame(socket)).slice(headerLength)).seq];

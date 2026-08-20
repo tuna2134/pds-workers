@@ -1,10 +1,12 @@
 import * as dagCbor from "@ipld/dag-cbor";
+import * as lexCbor from "@atproto/lex-cbor";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { MemoryBlockstore, Repo, readCarWithRoot, verifyDiffCar, verifyRepoCar } from "@atproto/repo";
+import { MemoryBlockstore, MST as OfficialMst, Repo, readCarWithRoot, verifyDiffCar, verifyRepoCar } from "@atproto/repo";
 import { describe, expect, it } from "vitest";
 import { decodeCar, encodeCar } from "../../src/repo/car";
 import { encodeBlock } from "../../src/repo/cid";
 import { createCommit, verifyCommit } from "../../src/repo/commit";
+import { decodeDagCbor, encodeDagCbor, ipldToJson, jsonToIpld } from "../../src/repo/dag-cbor";
 import { buildMst, deserializeMst, keyDepth, MstMap } from "../../src/repo/mst";
 import { CID } from "multiformats/cid";
 import { formatTid, parseTid, TidClock } from "../../src/repo/tid";
@@ -12,6 +14,21 @@ import { buildRepoCommit } from "../../src/repo/update";
 import { formatDidKey } from "@atproto/crypto";
 
 describe("repository core", () => {
+	it("uses the official DRISL codec and rejects non-data-model CBOR", async () => {
+		const link = CID.parse("bafyreie5cvv4h45feadgeuwhbcutmh6t2ceseocckahdoe6uat64zmz454");
+		const value = { $type: "app.example.record", count: 42, bytes: new Uint8Array([0, 1, 255]), link };
+		const block = await encodeBlock(value);
+		expect(block.bytes).toEqual(lexCbor.encode(value));
+		expect(block.cid.toString()).toBe((await lexCbor.cidForLex(value)).toString());
+		expect(dagCbor.decode(block.bytes)).toEqual(value);
+		expect(ipldToJson(jsonToIpld({ link: { $link: link.toString() }, bytes: { $bytes: "AAH/" } }))).toEqual({ link: { $link: link.toString() }, bytes: { $bytes: "AAH/" } });
+		expect(() => encodeDagCbor({ value: 1.5 })).toThrow("Non-integer");
+		expect(() => encodeDagCbor({ value: Number.MAX_SAFE_INTEGER + 1 })).toThrow("Non-integer");
+		expect(() => decodeDagCbor(Uint8Array.of(0xa2, 0x61, 0x61, 0x01, 0x61, 0x61, 0x02))).toThrow();
+		expect(() => decodeDagCbor(Uint8Array.of(0x9f, 0x01, 0xff))).toThrow();
+		expect(() => decodeDagCbor(Uint8Array.of(0xd8, 0x2a, 0x41, 0x01))).toThrow("leading 0x00");
+	});
+
 	it("uses the specified MST depth function", async () => {
 		expect(await keyDepth("2653ae71")).toBe(0);
 		expect(await keyDepth("blue")).toBe(1);
@@ -61,6 +78,62 @@ describe("repository core", () => {
 		expect((await buildMst(entries.toReversed())).root.equals(tree.root)).toBe(true);
 	});
 
+	it("matches the official implementation across deterministic insertion orders", async () => {
+		const values = await Promise.all(Array.from({ length: 128 }, (_, index) => encodeBlock({ index })));
+		const entries = values.map(({ cid }, index) => ({ key: `app.example.record/${(index * 73 % 128).toString().padStart(3, "0")}`, value: cid }));
+		for (const ordered of [entries, entries.toReversed()]) {
+			let official = await OfficialMst.create(new MemoryBlockstore());
+			for (const { key, value } of ordered) official = await official.add(key, value);
+			expect((await buildMst(ordered)).root.toString()).toBe((await official.getPointer()).toString());
+		}
+	});
+
+	it("matches the official MST through deterministic mixed mutations", async () => {
+		const values = await Promise.all(Array.from({ length: 64 }, (_, index) => encodeBlock({ index })));
+		let state = 0x5eed1234;
+		const random = () => state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
+		let map = new MstMap();
+		let official = await OfficialMst.create(new MemoryBlockstore());
+		const active: string[] = [];
+		let nextKey = 0;
+		for (let operation = 0; operation < 256; operation++) {
+			const choice = random() % 100;
+			if (!active.length || choice < 45) {
+				const key = `app.example.record/${(nextKey++).toString().padStart(4, "0")}`;
+				const value = values[random() % values.length].cid;
+				map = map.insert(key, value); official = await official.add(key, value); active.push(key);
+			} else {
+				const index = random() % active.length;
+				const key = active[index];
+				if (choice < 75) {
+					const value = values[random() % values.length].cid;
+					map = map.update(key, value); official = await official.update(key, value);
+				} else {
+					map = map.delete(key); official = await official.delete(key); active.splice(index, 1);
+				}
+			}
+			if (operation % 16 === 15) {
+				const serialized = await map.serialize();
+				expect(serialized.root.toString()).toBe((await official.getPointer()).toString());
+				expect([...map].map(({ key }) => key)).toEqual((await official.leaves()).map(({ key }) => key));
+			}
+		}
+		const serialized = await map.serialize();
+		expect([...(await MstMap.deserialize(serialized.root, serialized.blocks))]).toEqual([...map]);
+	});
+
+	it("rejects duplicate, missing, and boundary-invalid keys", async () => {
+		const value = (await encodeBlock({ value: true })).cid;
+		const longest = `a/${"b".repeat(1022)}`;
+		expect((await buildMst([{ key: longest, value }])).root).toBeDefined();
+		for (const key of ["a", "a/", "/b", `a/${"b".repeat(1023)}`, "a/💙"])
+			await expect(buildMst([{ key, value }])).rejects.toThrow("valid and unique");
+		const map = new MstMap([{ key: "a/b", value }]);
+		expect(() => map.insert("a/b", value)).toThrow("already exists");
+		expect(() => map.update("a/c", value)).toThrow("does not exist");
+		expect(() => map.delete("a/c")).toThrow("does not exist");
+	});
+
 	it("encodes sortable, monotonic TIDs", () => {
 		expect(formatTid(0n)).toBe("2222222222222");
 		expect(parseTid("3jzfcijpj2z2a")).toBeGreaterThan(0n);
@@ -89,6 +162,12 @@ describe("repository core", () => {
 		expect(decoded.blocks).toHaveLength(tree.blocks.length + 2);
 		const corrupted = car.slice(); corrupted[corrupted.length - 1] ^= 1;
 		await expect(decodeCar(corrupted)).rejects.toThrow("CID mismatch");
+		const duplicated = encodeCar(commit.cid, [record, commit, record, ...tree.blocks]);
+		expect((await decodeCar(duplicated)).blocks.filter(({ cid }) => cid.equals(record.cid))).toHaveLength(2);
+		expect((await readCarWithRoot(duplicated)).root.toString()).toBe(commit.cid.toString());
+		const overlongHeaderLength = Uint8Array.from([car[0] | 0x80, 0, ...car.slice(1)]);
+		await expect(decodeCar(overlongHeaderLength)).rejects.toThrow("Non-canonical CAR varint");
+		await expect(decodeCar(car.slice(0, -1))).rejects.toThrow("Malformed CAR block length");
 	});
 
 	it("produces a diff accepted by the independent atproto verifier", async () => {

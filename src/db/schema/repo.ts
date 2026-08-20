@@ -7,7 +7,7 @@ export const records = sqliteTable("records", {
 	path: text("path").primaryKey(), cid: text("cid").notNull(), bytes: blob("bytes", { mode: "buffer" }).notNull(),
 });
 export const blocks = sqliteTable("blocks", {
-	cid: text("cid").primaryKey(), bytes: blob("bytes", { mode: "buffer" }).notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+	cid: text("cid").primaryKey(), bytes: blob("bytes", { mode: "buffer" }).notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), lastSeenRev: text("last_seen_rev").notNull().default(""),
 });
 export const commits = sqliteTable("commits", {
 	rev: text("rev").primaryKey(), cid: text("cid").notNull().unique(), rootCid: text("root_cid").notNull(), bytes: blob("bytes", { mode: "buffer" }).notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
