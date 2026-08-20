@@ -50,15 +50,16 @@ export async function verifyDpop(proof: string, expected: { method: string; url:
 	return { claims: claims as DpopClaims, jkt: await jwkThumbprint(header.jwk) };
 }
 
-export async function issueDpopNonce(secret: string, now = Math.floor(Date.now() / 300_000)): Promise<string> {
+export async function issueDpopNonce(secret: string, now = Math.floor(Date.now() / 1000)): Promise<string> {
 	const payload = String(now);
 	const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 	return `${payload}.${encode(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload))))}`;
 }
 
-export async function validDpopNonce(nonce: string, secret: string, now = Math.floor(Date.now() / 300_000)): Promise<boolean> {
+export async function validDpopNonce(nonce: string, secret: string, now = Math.floor(Date.now() / 1000)): Promise<boolean> {
 	const [payload, signature, extra] = nonce.split(".");
-	if (!payload || !signature || extra || (payload !== String(now) && payload !== String(now - 1))) return false;
+	const issuedAt = Number(payload);
+	if (!payload || !signature || extra || !Number.isSafeInteger(issuedAt) || payload !== String(issuedAt) || issuedAt > now || now - issuedAt > 300) return false;
 	try {
 		const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
 		return crypto.subtle.verify("HMAC", key, decode(signature), new TextEncoder().encode(payload));

@@ -2,7 +2,7 @@
 
 Cloudflare Workers、SQLite Durable Objects、D1、R2で動くAT Protocol PDSの独立実装です。公式PDSの移植やラッパーではありません。Cloudflare固有の永続化・配信層を実装し、repo v3の検証・署名・Lexicon処理には公式 `@atproto/*` ライブラリを利用します。
 
-> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフロー、`bsky.tuna2134.dev` のCloudflare Worker/D1デプロイ・wildcard routing、実PLCアカウント作成、CAR署名検証、`bsky.network` Relay同期は確認済みです。既知の不足は末尾に明記しています。
+> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフロー、`bsky.tuna2134.dev` のCloudflare Worker/D1デプロイ・wildcard routing、公式OAuth clientによる本番metadata検証、実PLCアカウント作成、CAR署名検証、`bsky.network` Relay同期は確認済みです。既知の不足は末尾に明記しています。
 
 ## Architecture
 
@@ -153,11 +153,12 @@ goat repo mst /tmp/repo.car
 ## Known limitations / BLOCKED
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
-- **検証済み:** Vitest 4.1 / Cloudflare Workers test integration 0.22の現行runtime (`workerd 1.20260815.1`) でunit 26件・Workers integration 31件が成功し、`compatibility_date = 2026-08-15` と同じruntimeで検証しています。
+- **検証済み:** Vitest 4.1 / Cloudflare Workers test integration 0.22の現行runtime (`workerd 1.20260815.1`) でunit 30件・Workers integration 32件が成功し、`compatibility_date = 2026-08-15` と同じruntimeで検証しています。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 32` として同期し、実PLCアカウントをrevision `3mtj653g34cl2` まで取得しています。同revisionの33-record本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、commitを復元できています。
+- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 36` として同期し、実PLCアカウントをrevision `3mtjcmi6lls7y` まで取得しています。同revisionの37-record本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、commitを復元できています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
-- D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
+- 本番OAuth metadataは公式 `@atproto/oauth-client` 0.8.3のresolverを通過済みです。実アカウントを使うブラウザauthorization-code exchangeは、資格情報と対話的同意が必要なため **BLOCKED/unverified** です。
+- D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化しています。本番restore drillは破壊テストの明示承認とmaintenance windowがないため **BLOCKED** です。外部R2複製は未実装です。
 - **BLOCKED:** `pds-workers-blobs` は存在しますが、現在 R2 bucket lock rule が未設定です。保持日数はアカウント削除・blob cleanup の挙動を変えるため、運用方針を決めてから設定してください。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。

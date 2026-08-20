@@ -8,7 +8,7 @@ import { XrpcError, xrpcErrorResponse } from "./errors";
 import { publicFetch } from "../utils/public-fetch";
 
 const REQUEST_HEADERS = ["accept", "accept-language", "content-type", "atproto-accept-labelers"];
-const RESPONSE_HEADERS = ["content-type", "cache-control", "etag", "atproto-content-labelers", "retry-after", "www-authenticate"];
+const RESPONSE_HEADERS = ["content-type", "cache-control", "etag", "atproto-content-labelers", "atproto-repo-rev", "retry-after", "www-authenticate"];
 
 export async function proxyXrpc(request: Request, env: Env): Promise<Response> {
 	const started = performance.now();
@@ -29,11 +29,12 @@ export async function proxyXrpc(request: Request, env: Env): Promise<Response> {
 		const body = request.method === "POST" ? new Uint8Array(await request.arrayBuffer()) : undefined;
 		if (body && body.length > 10_000_000) throw new XrpcError(413, "PayloadTooLarge");
 		const endpoint = await resolveService(audience);
+		const tokenAudience = audience.slice(0, audience.indexOf("#"));
 		const target = new URL(`${url.pathname}${url.search}`, endpoint);
 		const headers = new Headers();
 		for (const name of REQUEST_HEADERS) if (request.headers.has(name)) headers.set(name, request.headers.get(name)!);
 		const repo = env.ACCOUNT_REPO.getByName(auth.account.did) as unknown as AccountRepo;
-		headers.set("authorization", `Bearer ${await repo.signServiceAuth(audience, nsid)}`);
+		headers.set("authorization", `Bearer ${await repo.signServiceAuth(tokenAudience, nsid)}`);
 		const upstream = await publicFetch(target, { method: request.method, headers, body, redirect: "manual", signal: AbortSignal.timeout(30_000) });
 		if (upstream.status >= 300 && upstream.status < 400) throw new XrpcError(502, "UpstreamFailure", "Service redirects are not allowed");
 		const responseHeaders = new Headers({ "x-request-id": requestId, "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });

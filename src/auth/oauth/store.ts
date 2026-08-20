@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { tokenHash } from "../../crypto/jwt";
 import type { d1 } from "../../db/d1";
 import { oauthClients, oauthDpopReplays, oauthSessions } from "../../db/schema/d1";
@@ -75,7 +75,7 @@ export class OAuthStore {
 	}
 
 	async rotateRefresh(id: string, previousRefresh: string, accessToken: string, nextRefresh: string, expiresAt: Date) {
-		const [session] = await this.db.update(oauthSessions).set({ accessHash: await tokenHash(accessToken), refreshHash: await tokenHash(nextRefresh), expiresAt, updatedAt: new Date() }).where(and(eq(oauthSessions.id, id), eq(oauthSessions.refreshHash, await tokenHash(previousRefresh)))).returning();
+		const [session] = await this.db.update(oauthSessions).set({ accessHash: await tokenHash(accessToken), refreshHash: await tokenHash(nextRefresh), expiresAt: sql`case when ${oauthSessions.clientAuthJkt} is null then ${oauthSessions.expiresAt} else ${expiresAt.getTime()} end`, updatedAt: new Date() }).where(and(eq(oauthSessions.id, id), eq(oauthSessions.refreshHash, await tokenHash(previousRefresh)))).returning();
 		return session;
 	}
 

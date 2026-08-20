@@ -15,8 +15,8 @@ importers:
         specifier: 0.5.4
         version: 0.5.4
       '@atproto/lex':
-        specifier: 0.3.0
-        version: 0.3.0
+        specifier: 0.3.6
+        version: 0.3.6
       '@atproto/lex-cbor':
         specifier: ^0.1.6
         version: 0.1.6
@@ -153,8 +153,8 @@ packages:
     resolution: {integrity: sha512-/tP3dRqaZu0EIoq0BSVzhvFGL6u0uu2KFDV21i73DpFsg6TXOTddKJ9bvgK83XdAJYL7PWi703XsaR31v9u5Qg==}
     engines: {node: '>=22'}
 
-  '@atproto/lex@0.3.0':
-    resolution: {integrity: sha512-Ir5f60NrCScDMZ2JGoxUHOQm+h6XlsDSykk0HzET8/qEeHTLwnI+MJIlBwB64eBoqGQ72qAEoMc8L+bJil+huA==}
+  '@atproto/lex@0.3.6':
+    resolution: {integrity: sha512-8Hpc6MbfkPJKaO5CvvIerEylbihI5GfrY5DzapZD4rV2TWfm3RU+DzeRpsxQJ0W9WOZRYvp1JnBcq/gZ48Qb0g==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -2280,7 +2280,7 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       tslib: 2.8.1
 
-  '@atproto/lex@0.3.0':
+  '@atproto/lex@0.3.6':
     dependencies:
       '@atproto/lex-builder': 0.1.12
       '@atproto/lex-client': 0.3.3

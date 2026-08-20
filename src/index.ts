@@ -27,6 +27,7 @@ import { validDid } from "./identity/did";
 import { AuditRepository } from "./db/audit";
 import { tokenHash } from "./crypto/jwt";
 import { readBody } from "./utils/body";
+import { didWebToUrl, isAtprotoDidWeb } from "@atproto/did";
 
 const router = createRouter();
 const app = new Hono<{ Bindings: Env }>();
@@ -81,7 +82,7 @@ function xrpcHeaders(response: Response, request: Request) {
 	headers.set("access-control-allow-origin", "*");
 	headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
 	headers.set("access-control-allow-headers", request.headers.get("access-control-request-headers") ?? "authorization, content-type, dpop, atproto-proxy, atproto-accept-labelers, x-request-id");
-	headers.set("access-control-expose-headers", "dpop-nonce, www-authenticate, atproto-content-labelers, ratelimit-limit, ratelimit-remaining, ratelimit-reset, retry-after, x-request-id");
+	headers.set("access-control-expose-headers", "dpop-nonce, www-authenticate, atproto-content-labelers, atproto-repo-rev, ratelimit-limit, ratelimit-remaining, ratelimit-reset, retry-after, x-request-id");
 	headers.set("access-control-max-age", "86400");
 	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
@@ -89,11 +90,14 @@ function xrpcHeaders(response: Response, request: Request) {
 app.all("/admin/pitr", (c) => adminPitr(c.req.raw, c.env));
 app.get("/.well-known/oauth-protected-resource", (c) => Response.json(protectedResourceMetadata(c.env), { headers: { "access-control-allow-origin": "*" } }));
 app.get("/.well-known/oauth-authorization-server", (c) => Response.json(authorizationServerMetadata(c.env), { headers: { "access-control-allow-origin": "*" } }));
-app.get("/.well-known/did.json", (c) => c.env.SERVICE_DID.startsWith("did:web:") ? Response.json({
-	"@context": ["https://www.w3.org/ns/did/v1"],
-	id: c.env.SERVICE_DID,
-	service: [{ id: `${c.env.SERVICE_DID}#atproto_pds`, type: "AtprotoPersonalDataServer", serviceEndpoint: c.env.PDS_URL }],
-}, { headers: { "cache-control": "public, max-age=300" } }) : c.notFound());
+app.get("/.well-known/did.json", (c) => {
+	if (!isAtprotoDidWeb(c.env.SERVICE_DID) || new URL(c.req.url).hostname !== didWebToUrl(c.env.SERVICE_DID).hostname) return c.notFound();
+	return Response.json({
+		"@context": ["https://www.w3.org/ns/did/v1"],
+		id: c.env.SERVICE_DID,
+		service: [{ id: `${c.env.SERVICE_DID}#atproto_pds`, type: "AtprotoPersonalDataServer", serviceEndpoint: c.env.PDS_URL }],
+	}, { headers: { "cache-control": "public, max-age=300" } });
+});
 app.get("/.well-known/atproto-did", async (c) => {
 	const account = await new AccountRepository(d1(c.env.DB)).find(new URL(c.req.url).hostname.toLowerCase());
 	return account?.status === "active" ? new Response(account.did, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } }) : c.notFound();

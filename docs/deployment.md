@@ -21,6 +21,8 @@ curl -fsS https://pds.example.com/.well-known/oauth-authorization-server
 curl -fsS https://pds.example.com/xrpc/com.atproto.server.describeServer
 ```
 
+On 2026-08-20, the production protected-resource and authorization-server metadata at `bsky.tuna2134.dev` passed the official `@atproto/oauth-client` 0.8.3 resolvers, including exact resource/issuer matching, HTTPS endpoints, PAR discovery, ES256 DPoP advertisement, and client-ID metadata document support. A complete browser authorization-code exchange against the production account remains **BLOCKED/unverified** without account credentials and interactive consent.
+
 For the current deployment, both `bsky.tuna2134.dev/*` and `*.bsky.tuna2134.dev/*` are ordinary Worker Routes (`zone_name: tuna2134.dev`), not Custom Domains. Keep the apex and wildcard DNS records in the zone and set them to proxied; routes do not create or replace DNS records. Cloudflare Custom Domains do not support wildcard hostnames. Verify a base request returns `200` and an unregistered hosted handle returns an application `404` (not a Cloudflare `522`).
 
 ## Backup and recovery
@@ -51,7 +53,7 @@ curl -fsS "$PDS_URL/admin/pitr?kind=account&did=did%3Aplc%3Aexample" \
   -H "x-confirm-restore: $BOOKMARK" --data "{\"bookmark\":\"$BOOKMARK\"}"
 ```
 
-The response contains an undo bookmark and `restartRequired: true`. Restart the object with a controlled Worker deployment, verify repository signature/MST/blob references, and retain the undo bookmark until validation completes. Use `kind=firehose` without `did` for the sequencer. Production PITR remains **BLOCKED/unverified** without Cloudflare credentials. CAR export is an interoperability snapshot, not a complete backup: it does not preserve the wrapped repo signing key or private operational history.
+The response contains an undo bookmark and `restartRequired: true`. Restart the object with a controlled Worker deployment, verify repository signature/MST/blob references, and retain the undo bookmark until validation completes. Use `kind=firehose` without `did` for the sequencer. Production PITR remains **BLOCKED/unverified** until an explicit destructive-test authorization and maintenance window are provided. CAR export is an interoperability snapshot, not a complete backup: it does not preserve the wrapped repo signing key or private operational history.
 
 R2 provides replicated eleven-nines durability, but deleted objects cannot be recovered. The current `pds-workers-blobs` bucket has no lock rules. Configure an R2 bucket lock for the desired retention period before production, and test account deletion semantics against that policy because locked blobs cannot be removed until retention expires:
 

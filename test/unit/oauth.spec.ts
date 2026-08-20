@@ -18,6 +18,9 @@ describe("OAuth DPoP", () => {
 		const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey) as JsonWebKey & { kty: "EC"; crv: "P-256"; x: string; y: string };
 		const nonce = await issueDpopNonce("test secret", 10);
 		expect(await validDpopNonce(nonce, "test secret", 10)).toBe(true);
+		expect(await validDpopNonce(nonce, "test secret", 310)).toBe(true);
+		expect(await validDpopNonce(nonce, "test secret", 311)).toBe(false);
+		expect(await validDpopNonce(nonce, "test secret", 9)).toBe(false);
 		const header = encode({ typ: "dpop+jwt", alg: "ES256", jwk });
 		const payload = encode({ jti: "unique-proof", htm: "POST", htu: "https://pds.example.com/oauth/token", iat: 1000, nonce });
 		const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(`${header}.${payload}`)));

@@ -34,11 +34,13 @@ describe("PDS worker", () => {
 		expect(response.status).toBe(204);
 		expect(response.headers.get("access-control-allow-origin")).toBe("*");
 		expect(response.headers.get("access-control-allow-headers")).toBe("authorization,content-type,atproto-proxy");
+		expect(response.headers.get("access-control-expose-headers")).toContain("atproto-repo-rev");
 	});
 	it("serves the configured service DID document", async () => {
-		const response = await SELF.fetch("https://example.com/.well-known/did.json");
+		const response = await SELF.fetch("https://localhost/.well-known/did.json");
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({ id: "did:web:localhost", service: [{ id: "did:web:localhost#atproto_pds", type: "AtprotoPersonalDataServer", serviceEndpoint: "https://pds.example.com" }] });
+		expect((await SELF.fetch("https://alice.localhost/.well-known/did.json")).status).toBe(404);
 	});
 
 	it("returns 404 outside XRPC (integration style)", async () => {
