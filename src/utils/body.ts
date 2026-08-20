@@ -1,4 +1,4 @@
-export async function readBody(request: Request, maximum: number): Promise<Uint8Array> {
+export async function readBody(request: Pick<Request, "headers" | "body">, maximum: number): Promise<Uint8Array> {
 	const declared = request.headers.get("content-length");
 	if (declared !== null) {
 		const length = Number(declared);

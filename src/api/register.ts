@@ -123,11 +123,12 @@ async function applyRepoWrites(target: AccountRepo, writes: RepoWrite[], swapCom
 	}
 }
 
-async function repoIdentifier(env: Env, identifier: string) {
+async function repoIdentifier(env: Env, identifier: string, sync = false) {
 	let did = identifier;
 	if (!validDid(did)) try { did = await resolveHandle(identifier); } catch { throw new XrpcError(400, "RepoNotFound"); }
 	const account = await new AccountRepository(d1(env.DB)).find(did);
-	if (!account || account.status !== "active") throw new XrpcError(400, "RepoNotFound");
+	if (!account || account.status === "pending") throw new XrpcError(400, "RepoNotFound");
+	if (account.status !== "active") throw new XrpcError(400, sync ? ({ deactivated: "RepoDeactivated", suspended: "RepoSuspended", takendown: "RepoTakendown" }[account.status] ?? "RepoNotFound") : "RepoNotFound");
 	return repo(env, did);
 }
 
@@ -213,7 +214,7 @@ export function createRouter(): XrpcRouter {
 		try {
 			const handle = normalizeHandle(required(params, "handle"));
 			const local = await new AccountRepository(d1(env.DB)).find(handle);
-			return { did: local?.status === "active" ? local.did : await resolveHandle(handle) };
+			return { did: local?.status === "active" ? local.did : await resolveHandleMapping(handle) };
 		}
 		catch (error) {
 			if (error instanceof TypeError) throw new XrpcError(400, "InvalidRequest", error.message);
@@ -243,7 +244,7 @@ export function createRouter(): XrpcRouter {
 				const identity = await accounts.findIdentity(account.did);
 				if (!identity?.signingKey) throw new Error("PLC rotation key is unavailable");
 				const update = await createPlcUpdate(context.env.PLC_DIRECTORY, account.did, handle, await unwrapKey(identity.signingKey, context.env.SIGNING_KEY_WRAPPING_SECRET));
-				await submitPlcOperation(context.env.PLC_DIRECTORY, account.did, update.operation);
+				await publishPlcOperation(context.env.PLC_DIRECTORY, account.did, update.operation);
 				document = plcDocument(update.data);
 			} else document = await didProvider(account.did).resolve(account.did);
 			await accounts.updateHandle(account, handle, document);
@@ -393,9 +394,8 @@ export function createRouter(): XrpcRouter {
 		const database = d1(env.DB);
 		const account = await new AccountRepository(database).find(input.identifier);
 		const main = await verifyPasswordOrDummy(input.password, account?.passwordHash);
-		if (!account || !["active", "deactivated"].includes(account.status)) { await audit(context, "auth.login.failed"); throw new XrpcError(401, "AuthenticationRequired", "Invalid identifier or password"); }
-		const appPassword = main ? null : await new AppPasswordRepository(database).find(account.id, input.password);
-		if (!main && !appPassword) { await audit(context, "auth.login.failed", account.id); throw new XrpcError(401, "AuthenticationRequired", "Invalid identifier or password"); }
+		const appPassword = main ? null : await new AppPasswordRepository(database).find(account?.id ?? "", input.password);
+		if (!account || !["active", "deactivated"].includes(account.status) || !main && !appPassword) { await audit(context, "auth.login.failed", account?.id); throw new XrpcError(401, "AuthenticationRequired", "Invalid identifier or password"); }
 		const tokens = await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(account, appPassword ? { appPasswordId: appPassword.id, privileged: appPassword.privileged } : undefined);
 		await audit(context, "auth.login.succeeded", account.id, { appPassword: Boolean(appPassword) });
 		return { ...tokens, handle: account.handle, did: account.did, ...(!appPassword || appPassword.privileged ? { email: account.email, emailConfirmed: account.emailConfirmed, emailAuthFactor: account.emailAuthFactor } : {}), active: account.status === "active", status: account.status };
@@ -817,13 +817,15 @@ export function createRouter(): XrpcRouter {
 	});
 	router.registerQuery("com.atproto.repo.listRecords", async ({ env, params }) => {
 		let records = await (await repoIdentifier(env, required(params, "repo"))).listRecords(required(params, "collection"));
-		if (params.get("reverse") === "true") records.reverse();
+		const reverse = params.get("reverse") === "true";
+		if (!reverse) records.reverse();
 		const cursor = params.get("cursor");
-		if (cursor) records = records.filter((record) => params.get("reverse") === "true" ? record.uri < cursor : record.uri > cursor);
+		const rkey = (uri: string) => uri.slice(uri.lastIndexOf("/") + 1);
+		if (cursor) records = records.filter((record) => reverse ? rkey(record.uri) > cursor : rkey(record.uri) < cursor);
 		const limit = Math.min(100, Math.max(1, Number(params.get("limit") ?? 50)));
 		if (!Number.isInteger(limit)) throw new XrpcError(400, "InvalidRequest", "limit must be an integer");
 		const page = records.slice(0, limit);
-		return { records: page, ...(records.length > limit ? { cursor: page.at(-1)!.uri } : {}) };
+		return { records: page, ...(records.length > limit ? { cursor: rkey(page.at(-1)!.uri) } : {}) };
 	});
 	router.registerQuery("com.atproto.repo.describeRepo", async ({ env, params }) => {
 		const database = d1(env.DB);
@@ -841,14 +843,14 @@ export function createRouter(): XrpcRouter {
 		return { handle: account.handle, did: account.did, didDoc: identity.document, collections: await repo(env, account.did).listCollections(), handleIsCorrect };
 	});
 	router.registerQuery("com.atproto.sync.getRepo", async ({ env, params }) => {
-		const target = await repoIdentifier(env, required(params, "did"));
+		const target = await repoIdentifier(env, required(params, "did"), true);
 		const state = await target.describe();
 		const since = params.get("since") ?? undefined;
 		if (since && !isValidTid(since)) throw new XrpcError(400, "InvalidRequest", "since must be a TID");
 		return car(await target.exportRepo(since), state.rev);
 	});
 	router.registerQuery("com.atproto.sync.getLatestCommit", async ({ env, params }) => {
-		const state = await (await repoIdentifier(env, required(params, "did"))).describe();
+		const state = await (await repoIdentifier(env, required(params, "did"), true)).describe();
 		return { cid: state.commit, rev: state.rev };
 	});
 	router.registerQuery("com.atproto.sync.getRepoStatus", async ({ env, params }) => {
@@ -885,7 +887,7 @@ export function createRouter(): XrpcRouter {
 	router.registerQuery("com.atproto.sync.getBlocks", async ({ env, params }) => {
 		const cids = params.getAll("cids");
 		if (!cids.length) throw new XrpcError(400, "InvalidRequest", "At least one cids parameter is required");
-		try { return car(await (await repoIdentifier(env, required(params, "did"))).getBlocks(cids)); }
+		try { return car(await (await repoIdentifier(env, required(params, "did"), true)).getBlocks(cids)); }
 		catch (error) {
 			if (error instanceof TypeError) throw new XrpcError(400, "InvalidRequest", error.message);
 			if (error instanceof Error && error.message === "BlockNotFound") throw new XrpcError(400, "BlockNotFound");
@@ -893,7 +895,7 @@ export function createRouter(): XrpcRouter {
 		}
 	});
 	router.registerQuery("com.atproto.sync.getRecord", async ({ env, params }) => {
-		const target = await repoIdentifier(env, required(params, "did"));
+		const target = await repoIdentifier(env, required(params, "did"), true);
 		const state = await target.describe();
 		try { return car(await target.getRecordProof(`${required(params, "collection")}/${required(params, "rkey")}`), state.rev); }
 		catch (error) {
@@ -902,7 +904,7 @@ export function createRouter(): XrpcRouter {
 		}
 	});
 	router.registerQuery("com.atproto.sync.listBlobs", async ({ env, params }) => {
-		let cids = await (await repoIdentifier(env, required(params, "did"))).listBlobs(params.get("since") ?? undefined);
+		let cids = await (await repoIdentifier(env, required(params, "did"), true)).listBlobs(params.get("since") ?? undefined);
 		const cursor = params.get("cursor");
 		if (cursor) cids = cids.filter((cid) => cid > cursor);
 		const limit = Math.min(1000, Math.max(1, Number(params.get("limit") ?? 500)));
@@ -913,7 +915,7 @@ export function createRouter(): XrpcRouter {
 	router.registerQuery("com.atproto.sync.getBlob", async ({ env, params }) => {
 		const did = required(params, "did");
 		const cid = required(params, "cid");
-		const target = await repoIdentifier(env, did);
+		const target = await repoIdentifier(env, did, true);
 		if (!await target.isBlobReferenced(cid)) throw new XrpcError(400, "BlobNotFound");
 		const object = await new BlobStorage(env.BLOBS, Number(env.BLOB_UPLOAD_LIMIT)).get(did, cid);
 		if (!object) throw new XrpcError(400, "BlobNotFound");

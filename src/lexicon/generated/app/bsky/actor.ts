@@ -4,6 +4,7 @@
 
 export * as defs from './actor/defs.js'
 export * as getPreferences from './actor/getPreferences.js'
+export * as getProfile from './actor/getProfile.js'
 export * as profile from './actor/profile.js'
 export * as putPreferences from './actor/putPreferences.js'
 export * as status from './actor/status.js'

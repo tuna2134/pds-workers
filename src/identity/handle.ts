@@ -1,6 +1,7 @@
 import { didProvider, validDid } from "./did";
 import { isValidHandle, normalizeAndEnsureValidHandle } from "@atproto/syntax";
 import { publicFetch } from "../utils/public-fetch";
+import { readBody } from "../utils/body";
 
 export function normalizeHandle(value: string): string {
 	try { return normalizeAndEnsureValidHandle(value); }
@@ -22,7 +23,7 @@ async function resolveDns(handle: string): Promise<string | undefined> {
 	url.searchParams.set("type", "TXT");
 	const response = await fetch(url, { headers: { accept: "application/dns-json" } });
 	if (!response.ok) return;
-	const dids = dnsDids((await response.json<{ Answer?: unknown }>()).Answer);
+	const dids = dnsDids((JSON.parse(new TextDecoder().decode(await readBody(response, 64_000))) as { Answer?: unknown }).Answer);
 	return dids.length === 1 ? dids[0] : undefined;
 }
 
@@ -38,7 +39,7 @@ async function resolveHttps(handle: string): Promise<string | undefined> {
 			continue;
 		}
 		if (!response.ok) return;
-		const did = (await response.text()).trim();
+		const did = new TextDecoder().decode(await readBody(response, 8_192)).trim();
 		return validDid(did) ? did : undefined;
 	}
 }

@@ -278,7 +278,6 @@ export class AccountRepo extends DurableObject<Env> {
 		const state = await this.describe();
 		const rows = await this.#db.select().from(schema.records).all();
 		const record = rows.find((row) => row.path === path);
-		if (!record) throw new Error("RecordNotFound");
 		const tree = await buildMst(rows.map((row) => ({ key: row.path, value: CID.parse(row.cid) })));
 		if (tree.root.toString() !== state.root) throw new Error("Repository root does not match record index");
 		const commit = await this.#db.select().from(schema.commits).where(eq(schema.commits.cid, state.commit)).get();
@@ -286,7 +285,7 @@ export class AccountRepo extends DurableObject<Env> {
 		return encodeCar(CID.parse(state.commit), [
 			{ cid: CID.parse(state.commit), bytes: new Uint8Array(commit.bytes) },
 			...tree.blocks,
-			{ cid: CID.parse(record.cid), bytes: new Uint8Array(record.bytes) },
+			...(record ? [{ cid: CID.parse(record.cid), bytes: new Uint8Array(record.bytes) }] : []),
 		]);
 	}
 

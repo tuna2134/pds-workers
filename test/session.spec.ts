@@ -44,6 +44,28 @@ beforeEach(() => applyD1Migrations(env.DB, env.TEST_D1_MIGRATIONS));
 afterEach(async () => { fetchMock.deactivate(); await reset(); });
 
 describe("password sessions", () => {
+	it("resolves a DNS handle before the DID document is updated", async () => {
+		fetchMock.activate();
+		fetchMock.disableNetConnect();
+		const did = "did:plc:dnsresolutiontest";
+		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=_atproto.custom.example.com&type=TXT" }).reply(200, { Answer: [{ type: 16, data: `"did=${did}"` }] });
+		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=custom.example.com&type=A" }).reply(200, { Answer: [{ type: 1, data: "93.184.216.34" }] });
+		fetchMock.get("https://cloudflare-dns.com").intercept({ method: "GET", path: "/dns-query?name=custom.example.com&type=AAAA" }).reply(200, { Answer: [] });
+		fetchMock.get("https://custom.example.com").intercept({ method: "GET", path: "/.well-known/atproto-did" }).reply(404, "");
+		const response = await SELF.fetch("https://example.com/xrpc/com.atproto.identity.resolveHandle?handle=custom.example.com");
+		expect(response.status, await response.clone().text()).toBe(200);
+		expect(await response.json()).toEqual({ did });
+		fetchMock.assertNoPendingInterceptors();
+	});
+
+	it("returns the same generic failure for missing accounts and wrong passwords", async () => {
+		const account = await new AccountRepository(d1(env.DB)).create({ did: "did:plc:genericloginfailure", handle: "generic-login.localhost", email: "generic@example.com", passwordHash: await hashPassword("the correct secure password") });
+		const login = (identifier: string) => SELF.fetch("https://example.com/xrpc/com.atproto.server.createSession", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ identifier, password: "the wrong secure password" }) });
+		const [existing, missing] = await Promise.all([login(account.handle), login("missing.localhost")]);
+		expect(existing.status).toBe(401);
+		expect(await existing.json()).toEqual(await missing.json());
+	});
+
 	it("rejects invalid account email addresses before creating identity state", async () => {
 		const response = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ handle: "invalid-email.localhost", email: "not-an-email", password: "a secure account password" }) });
 		expect(response.status).toBe(400);
@@ -114,7 +136,9 @@ describe("password sessions", () => {
 		expect(deleted.status, await deleted.clone().text()).toBe(200);
 		expect(await new AccountRepository(d1(env.DB)).find(did)).toBeUndefined();
 		expect((await env.BLOBS.list({ prefix: `blobs/${did}/` })).objects).toHaveLength(0);
-		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`)).status).toBe(400);
+		const unavailable = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`);
+		expect(unavailable.status).toBe(400);
+		expect(await unavailable.json()).toMatchObject({ error: "RepoNotFound" });
 		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.getSession", { headers: { authorization: `Bearer ${accessJwt}` } })).status).toBe(401);
 	});
 
@@ -167,7 +191,9 @@ describe("password sessions", () => {
 		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`)).status).toBe(200);
 		const deactivated = await SELF.fetch("https://example.com/xrpc/com.atproto.server.deactivateAccount", { method: "POST", headers: { authorization: `Bearer ${accessJwt}`, "content-type": "application/json" }, body: "{}" });
 		expect(deactivated.status).toBe(200);
-		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`)).status).toBe(400);
+		const unavailable = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRepo?did=${did}`);
+		expect(unavailable.status).toBe(400);
+		expect(await unavailable.json()).toMatchObject({ error: "RepoDeactivated" });
 		fetchMock.assertNoPendingInterceptors();
 	});
 
@@ -412,6 +438,9 @@ describe("password sessions", () => {
 
 		const refreshed = await Promise.all([1, 2].map(() => SELF.fetch("https://example.com/xrpc/com.atproto.server.refreshSession", { method: "POST", headers: { authorization: `Bearer ${tokens.refreshJwt}` } })));
 		expect(refreshed.map(({ status }) => status).sort()).toEqual([200, 401]);
+		const rotated = await refreshed.find(({ status }) => status === 200)!.json<{ accessJwt: string }>();
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.getSession", { headers: { authorization: `Bearer ${tokens.accessJwt}` } })).status).toBe(401);
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.server.getSession", { headers: { authorization: `Bearer ${rotated.accessJwt}` } })).status).toBe(200);
 	});
 
 	it("proxies authenticated XRPC calls to a DID service", async () => {

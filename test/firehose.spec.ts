@@ -21,6 +21,13 @@ function decodeFrame(frame: Uint8Array) {
 }
 
 describe("subscribeRepos", () => {
+	it("requires a WebSocket upgrade and a valid cursor", async () => {
+		expect((await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos")).status).toBe(426);
+		for (const cursor of ["-1", "1.5", "9007199254740992"]) {
+			expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.subscribeRepos?cursor=${cursor}`, { headers: { upgrade: "websocket" } })).status).toBe(400);
+		}
+	});
+
 	it("sequences identity and account events", async () => {
 		const firehose = env.FIREHOSE.getByName("global");
 		const subscription = await SELF.fetch("https://example.com/xrpc/com.atproto.sync.subscribeRepos", { headers: { upgrade: "websocket" } });

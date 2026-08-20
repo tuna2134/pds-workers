@@ -39,6 +39,12 @@ describe("public repository XRPC", () => {
 		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getBlocks?did=${did}&cids=not-a-cid`)).status).toBe(400);
 		await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/two", record: { $type: "app.bsky.feed.post", text: "second" } }]);
 		const next = await (await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getLatestCommit?did=${did}`)).json<{ cid: string; rev: string }>();
+		const firstPage = await (await SELF.fetch(`https://example.com/xrpc/com.atproto.repo.listRecords?repo=${did}&collection=app.bsky.feed.post&limit=1`)).json<{ cursor: string; records: { uri: string }[] }>();
+		expect(firstPage).toMatchObject({ cursor: "two", records: [{ uri: `at://${did}/app.bsky.feed.post/two` }] });
+		const secondPage = await (await SELF.fetch(`https://example.com/xrpc/com.atproto.repo.listRecords?repo=${did}&collection=app.bsky.feed.post&limit=1&cursor=${firstPage.cursor}`)).json<{ records: { uri: string }[] }>();
+		expect(secondPage.records).toEqual([{ uri: `at://${did}/app.bsky.feed.post/one`, cid: expect.any(String), value: { $type: "app.bsky.feed.post", text: "hello" } }]);
+		const reversePage = await (await SELF.fetch(`https://example.com/xrpc/com.atproto.repo.listRecords?repo=${did}&collection=app.bsky.feed.post&limit=1&reverse=true`)).json<{ cursor: string; records: { uri: string }[] }>();
+		expect(reversePage).toMatchObject({ cursor: "one", records: [{ uri: `at://${did}/app.bsky.feed.post/one` }] });
 		const listed = await (await SELF.fetch("https://example.com/xrpc/com.atproto.sync.listRepos?limit=1")).json<{ repos: { did: string; head: string; rev: string }[] }>();
 		expect(listed.repos).toContainEqual({ did, head: next.cid, rev: next.rev, active: true });
 		const byCollection = await (await SELF.fetch("https://example.com/xrpc/com.atproto.sync.listReposByCollection?collection=app.bsky.feed.post&limit=10")).json<{ repos: { did: string }[] }>();
@@ -58,6 +64,11 @@ describe("public repository XRPC", () => {
 		expect(proof.roots[0].toString()).toBe(next.cid);
 		expect(proof.blocks.map(({ cid }) => cid.toString())).toContain((await repo.getRecord("app.bsky.feed.post/two"))!.cid);
 		expect(proof.blocks.map(({ cid }) => cid.toString())).not.toContain((await repo.getRecord("app.bsky.feed.post/one"))!.cid);
+		const missingResponse = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getRecord?did=${did}&collection=app.bsky.feed.post&rkey=missing`);
+		expect(missingResponse.status).toBe(200);
+		const missingProof = await decodeCar(new Uint8Array(await missingResponse.arrayBuffer()));
+		expect(missingProof.roots[0].toString()).toBe(next.cid);
+		expect(missingProof.blocks.map(({ cid }) => cid.toString())).not.toContain((await repo.getRecord("app.bsky.feed.post/two"))!.cid);
 	});
 
 	it("uses conventional JSON errors", async () => {
