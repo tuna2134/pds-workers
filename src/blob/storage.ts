@@ -1,4 +1,5 @@
 import { cidForBytes } from "../repo/cid";
+import { readBody } from "../utils/body";
 
 const RAW_CODEC = 0x55;
 const MIME = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
@@ -11,8 +12,7 @@ export class BlobStorage {
 		if (declared && Number(declared) > this.maximumSize) throw new RangeError("Blob exceeds upload limit");
 		const mimeType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
 		if (!mimeType || !MIME.test(mimeType)) throw new TypeError("A valid Content-Type is required");
-		const bytes = new Uint8Array(await request.arrayBuffer());
-		if (bytes.length > this.maximumSize || (declared && Number(declared) !== bytes.length)) throw new RangeError("Blob size does not match Content-Length or exceeds upload limit");
+		const bytes = await readBody(request, this.maximumSize);
 		const cid = await cidForBytes(bytes, RAW_CODEC);
 		const key = `blobs/${did}/${cid}`;
 		await this.bucket.put(key, bytes, { httpMetadata: { contentType: mimeType }, customMetadata: { uploadedAt: new Date().toISOString() } });

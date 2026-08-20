@@ -9,6 +9,7 @@ import { authenticateClient, clientMetadata, redirectUriAllowed } from "./client
 import { AuditRepository } from "../../db/audit";
 import { expandPermissionScopes } from "./permissions";
 import { constantTimeEqual } from "../../crypto/constant-time";
+import { readBody } from "../../utils/body";
 
 function oauthError(error: string, status = 400, description?: string, nonce?: string) {
 	return Response.json({ error, ...(description ? { error_description: description } : {}) }, { status, headers: { "cache-control": "no-store", ...(nonce ? { "dpop-nonce": nonce } : {}) } });
@@ -16,10 +17,7 @@ function oauthError(error: string, status = 400, description?: string, nonce?: s
 
 async function form(request: Request): Promise<URLSearchParams> {
 	if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/x-www-form-urlencoded")) throw new TypeError("Form encoding required");
-	const length = Number(request.headers.get("content-length"));
-	if (Number.isFinite(length) && length > 100_000) throw new TypeError("Request too large");
-	const body = new TextDecoder().decode(await request.arrayBuffer());
-	if (body.length > 100_000) throw new TypeError("Request too large");
+	const body = new TextDecoder().decode(await readBody(request, 100_000));
 	return new URLSearchParams(body);
 }
 

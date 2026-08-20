@@ -230,7 +230,10 @@ export class AccountRepo extends DurableObject<Env> {
 
 	async getBlocks(cids: string[]): Promise<Uint8Array> {
 		if (!cids.length || cids.length > 1000) throw new TypeError("Between 1 and 1000 CIDs are required");
-		const requested = cids.map((cid) => CID.parse(cid));
+		const requested = cids.map((cid) => {
+			try { return CID.parse(cid); }
+			catch { throw new TypeError("Invalid CID"); }
+		});
 		const rows = await this.#db.select().from(schema.blocks).where(inArray(schema.blocks.cid, cids)).all();
 		if (rows.length !== new Set(cids).size) throw new Error("BlockNotFound");
 		const byCid = new Map(rows.map((row) => [row.cid, row]));

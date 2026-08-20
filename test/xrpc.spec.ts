@@ -22,6 +22,7 @@ describe("public repository XRPC", () => {
 		expect(head).toMatchObject({ rev: expect.stringMatching(/^[2-7a-z]{13}$/) });
 		const blocks = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getBlocks?did=${did}&cids=${head.cid}`);
 		expect(blocks.headers.get("content-type")).toBe("application/vnd.ipld.car");
+		expect((await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getBlocks?did=${did}&cids=not-a-cid`)).status).toBe(400);
 		await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/two", record: { $type: "app.bsky.feed.post", text: "second" } }]);
 		const next = await (await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getLatestCommit?did=${did}`)).json<{ cid: string; rev: string }>();
 		const listed = await (await SELF.fetch("https://example.com/xrpc/com.atproto.sync.listRepos?limit=1")).json<{ repos: { did: string; head: string; rev: string }[] }>();

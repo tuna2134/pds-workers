@@ -1,6 +1,7 @@
 import { XrpcError, xrpcErrorResponse } from "./errors";
 import { issueDpopNonce } from "../auth/oauth/dpop";
 import { validateXrpcBody, validateXrpcOutput, validateXrpcRequest } from "../lexicon/xrpc";
+import { readBody } from "../utils/body";
 
 export interface XrpcContext { request: Request; env: Env; params: URLSearchParams; requestId: string }
 type Handler = (context: XrpcContext) => unknown | Promise<unknown>;
@@ -32,6 +33,8 @@ export class XrpcRouter {
 			status = response.status;
 			return await this.#headers(response, requestId, request, env);
 		} catch (error) {
+			if (error instanceof XrpcError) console.error(JSON.stringify({ requestId, nsid, error: error.error, ...(error.status >= 500 && error.message ? { detail: error.message } : {}) }));
+			else console.error(JSON.stringify({ requestId, nsid, error: error instanceof Error ? error.message : "Unknown error" }));
 			const response = xrpcErrorResponse(error, requestId);
 			status = response.status;
 			return await this.#headers(response, requestId, request, env);
@@ -62,18 +65,22 @@ export function required(params: URLSearchParams, name: string): string {
 }
 
 export async function jsonBody<T>(request: Request, maximum = 1_000_000): Promise<T> {
-	const length = Number(request.headers.get("content-length") ?? 0);
-	if (length > maximum) throw new XrpcError(413, "PayloadTooLarge");
-	if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new XrpcError(400, "InvalidRequest", "Content-Type must be application/json");
-	const bytes = new Uint8Array(await request.arrayBuffer());
-	if (bytes.length > maximum) throw new XrpcError(413, "PayloadTooLarge");
 	try {
-		const value = JSON.parse(new TextDecoder().decode(bytes)) as T;
-		validateXrpcBody(new URL(request.url).pathname.slice(6), value);
-		return value;
-	}
-	catch (error) {
+		const bytes = await readBody(request, maximum);
+		if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new XrpcError(400, "InvalidRequest", "Content-Type must be application/json");
+		try {
+			const value = JSON.parse(new TextDecoder().decode(bytes)) as T;
+			validateXrpcBody(new URL(request.url).pathname.slice(6), value);
+			return value;
+		}
+		catch (error) {
+			if (error instanceof XrpcError) throw error;
+			throw new XrpcError(400, "InvalidRequest", error instanceof SyntaxError ? "Invalid JSON body" : error instanceof Error ? error.message : "Invalid request body");
+		}
+	} catch (error) {
 		if (error instanceof XrpcError) throw error;
-		throw new XrpcError(400, "InvalidRequest", error instanceof SyntaxError ? "Invalid JSON body" : error instanceof Error ? error.message : "Invalid request body");
+		if (error instanceof RangeError) throw new XrpcError(413, "PayloadTooLarge");
+		if (error instanceof TypeError && error.message === "Invalid Content-Length") throw new XrpcError(400, "InvalidRequest", error.message);
+		throw new XrpcError(400, "InvalidRequest", error instanceof Error ? error.message : "Invalid request body");
 	}
 }

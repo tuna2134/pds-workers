@@ -7,6 +7,11 @@ export interface MstEntry { key: string; value: CID }
 export interface Block { cid: CID; bytes: Uint8Array }
 export interface Mst { root: CID; blocks: Block[] }
 
+const MAX_NODE_BYTES = 1_000_000;
+const MAX_NODE_ENTRIES = 10_000;
+const MAX_NODE_COUNT = 1_000_000;
+const MAX_TREE_DEPTH = 256;
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
@@ -72,20 +77,23 @@ export async function deserializeMst(root: CID, source: Iterable<Block>): Promis
 	const visited = new Set<string>();
 	let lastKey: string | undefined;
 
-	async function visit(cid: CID): Promise<void> {
-		const id = cid.toString();
+    async function visit(cid: CID, depth = 0): Promise<void> {
+        if (depth > MAX_TREE_DEPTH) throw new RangeError("MST depth exceeds limit");
+        if (visited.size >= MAX_NODE_COUNT) throw new RangeError("MST node count exceeds limit");
+        const id = cid.toString();
 		if (visited.has(id)) throw new TypeError("MST contains a cycle or shared node");
 		visited.add(id);
-		const block = blocks.get(id);
-		if (!block) throw new TypeError(`Missing MST block: ${id}`);
+        const block = blocks.get(id);
+        if (!block) throw new TypeError(`Missing MST block: ${id}`);
+        if (block.bytes.length > MAX_NODE_BYTES) throw new RangeError("MST node exceeds size limit");
 		let value: unknown;
 		try { value = dagCbor.decode(block.bytes); } catch { throw new TypeError("Malformed MST block"); }
 		const canonical = await encodeBlock(value);
 		if (!canonical.cid.equals(cid) || !bytesEqual(canonical.bytes, block.bytes)) throw new TypeError("Non-canonical or CID-mismatched MST block");
 		if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Malformed MST node");
 		const node = value as Partial<EncodedNode> & Record<string, unknown>;
-		if (Object.keys(node).sort().join(",") !== "e,l" || !Array.isArray(node.e) || (node.l !== null && !CID.asCID(node.l))) throw new TypeError("Malformed MST node");
-		if (node.l) await visit(CID.asCID(node.l)!);
+        if (Object.keys(node).sort().join(",") !== "e,l" || !Array.isArray(node.e) || node.e.length > MAX_NODE_ENTRIES || (node.l !== null && !CID.asCID(node.l))) throw new TypeError("Malformed MST node");
+        if (node.l) await visit(CID.asCID(node.l)!, depth + 1);
 		let previous = new Uint8Array();
 		for (const item of node.e) {
 			if (!item || typeof item !== "object" || Array.isArray(item)) throw new TypeError("Malformed MST entry");
@@ -97,7 +105,7 @@ export async function deserializeMst(root: CID, source: Iterable<Block>): Promis
 			try { key = decoder.decode(keyBytes); } catch { throw new TypeError("Malformed MST key"); }
 			if (!validMstKey(key) || lastKey !== undefined && key <= lastKey) throw new TypeError("MST keys are not strictly ordered");
 			entries.push({ key, value: CID.asCID(entry.v)! }); lastKey = key; previous = keyBytes;
-			if (entry.t) await visit(CID.asCID(entry.t)!);
+            if (entry.t) await visit(CID.asCID(entry.t)!, depth + 1);
 		}
 	}
 

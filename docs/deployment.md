@@ -11,6 +11,8 @@
 9. Route the PDS origin and optional wildcard hosted-handle domain to the Worker.
 10. Verify OAuth metadata, handle well-known, XRPC description, DO initialization, email delivery, blob round trip, CAR export, and firehose before creating a production account.
 
+If account creation returns `500` or `502`, capture the response `x-request-id` and inspect `npx wrangler tail pds-workers`. Confirm that `pnpm db:migrate:remote` completed and that all three secrets are present. A `502` from `createAccount` is normally PLC publication or reachability; retrying the same handle/email/password safely resumes a pending PLC identity after the upstream result is verified.
+
 Example post-deploy probes:
 
 ```bash
@@ -56,4 +58,4 @@ npx wrangler r2 bucket lock list pds-workers-blobs
 
 Back up `wrangler.jsonc`, migration sources, deployed version identifiers, and wrapping-secret recovery material in a separate access domain. A wrapping secret without the encrypted DO/D1 state is useless; encrypted state without the wrapping secret permanently loses signing ability. Never place secret values in SQL exports or repository files.
 
-The current workspace has passed local migration and dry-run build. Remote migration, deploy, production PITR/restore drills, Durable Object production migrations, custom domains, and Relay crawling are **BLOCKED** until Cloudflare credentials and a deployment target are supplied.
+The current `pds-workers` target has passed remote D1 migration, Worker deployment, binding initialization, and a read-only `describeServer` probe. Production PITR/restore drills, custom-domain routing, and Relay crawling remain **BLOCKED/unverified** until those production checks are run against the final public hostname.

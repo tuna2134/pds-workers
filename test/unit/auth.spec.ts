@@ -5,7 +5,7 @@ import { signJwt, verifyJwt } from "../../src/crypto/jwt";
 describe("authentication primitives", () => {
 	it("hashes passwords and domain-separates session tokens", async () => {
 		const hash = await hashPassword("correct horse battery staple");
-		expect(hash).toMatch(/^(argon2id\$v=19|pbkdf2-sha256\$)/);
+		expect(hash).toMatch(/^pbkdf2-sha256\$/);
 		expect(await verifyPassword("correct horse battery staple", hash)).toBe(true);
 		expect(await verifyPassword("wrong password", hash)).toBe(false);
 		expect(await verifyPasswordOrDummy("irrelevant password")).toBe(false);

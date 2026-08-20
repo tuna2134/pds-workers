@@ -49,6 +49,8 @@ describe("repository core", () => {
 		await expect(deserializeMst(serialized.root, [])).rejects.toThrow("Missing MST block");
 		const malformed = await encodeBlock({ l: null, e: [{ p: 1, k: new TextEncoder().encode("app.example.record/a"), v: values[0].cid, t: null }] });
 		await expect(deserializeMst(malformed.cid, [malformed])).rejects.toThrow("Malformed MST entry");
+		const oversized = await encodeBlock({ l: null, e: Array.from({ length: 10_001 }, () => ({ p: 0, k: new Uint8Array([97]), v: values[0].cid, t: null })) });
+		await expect(deserializeMst(oversized.cid, [oversized])).rejects.toThrow("Malformed MST node");
 	});
 
 	it("handles a deterministic 1000-record repository", async () => {

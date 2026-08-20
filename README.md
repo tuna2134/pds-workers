@@ -2,7 +2,7 @@
 
 Cloudflare Workers、SQLite Durable Objects、D1、R2で動くAT Protocol PDSの独立実装です。公式PDSの移植やラッパーではありません。Cloudflare固有の永続化・配信層を実装し、repo v3の検証・署名・Lexicon処理には公式 `@atproto/*` ライブラリを利用します。
 
-> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフローはテスト済みですが、実Cloudflare環境、PLC本番登録、実Relayとの相互運用は認証情報がないため **BLOCKED** です。既知の不足は末尾に明記しています。
+> **開発中です。** ローカルのリポジトリ・同期・public/confidential OAuthフローと、現在のCloudflare Worker/D1デプロイは検証済みです。PLC本番登録、実Relayとの相互運用、最終公開ドメインは未検証 (**BLOCKED**) です。既知の不足は末尾に明記しています。
 
 ## Architecture
 
@@ -103,6 +103,10 @@ curl -sS "$PDS_URL/xrpc/com.atproto.server.createAccount" \
 
 応答のDIDを保存してください。PDS管理下のwildcard subdomainなら `/.well-known/atproto-did` はWorkerが返します。外部handleでは `_atproto.<handle>` TXTへ `did=<DID>` を設定するか、handle originの `/.well-known/atproto-did` でDIDを返します。handleとDID documentの `alsoKnownAs` は双方向に一致する必要があります。
 
+### Account creation troubleshooting
+
+`createAccount` が `500`/`502` になった場合は、まず `x-request-id` を控えて `npx wrangler tail pds-workers` で同じリクエストを確認してください。remote D1へ `pnpm db:migrate:remote` を適用し、`SIGNING_KEY_WRAPPING_SECRET`（32-byte base64url）、`SESSION_JWT_SECRET`、`ADMIN_PASSWORD` をSecretとして登録します。`PDS_URL`、`SERVICE_DID`、`AVAILABLE_USER_DOMAINS` は実際の公開HTTPS origin・DID・handle suffixに置き換えてください。`502` はPLC directoryへの到達・拒否を示し、失敗した作成は同じhandle/email/passwordで再送してpending identityを復旧できます。
+
 ## DNS and routing
 
 - `pds.example.com/*` をWorkerへroute
@@ -138,13 +142,13 @@ Relay登録は外部サービスの判断対象です。sandbox RelayでCAR、�
 
 ## Known limitations / BLOCKED
 
-- **BLOCKED:** Cloudflare credentialsがないためremote D1 migration、実deploy、R2/DO本番初期化は未検証。
+- **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
 - **BLOCKED:** 本物のPLC directoryへのidentity作成と、実Relay/`goat`/`atproto-tap`によるfederationは未検証。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
-- `node:crypto` Argon2id（19 MiB、2 passes）を利用し、未対応の旧Workers runtimeではPBKDF2-SHA256 600,000回へフォールバックします。既存PBKDF2ハッシュは移行用に検証可能です。
+- Workers標準WebCryptoのPBKDF2-SHA256（600,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
 - PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
 - `wrangler.jsonc` のexample valuesは本番値ではありません。

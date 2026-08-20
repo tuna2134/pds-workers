@@ -108,7 +108,7 @@ export class Firehose extends DurableObject<Env> {
 			server.close(1008, "FutureCursor");
 		} else if (cursor !== null) {
 			if (oldest && cursor !== 0 && cursor < oldest.seq) server.send(streamFrame("#info", { name: "OutdatedCursor", message: "Cursor is outside the retained backfill window" }));
-			const start = !oldest ? 1 : cursor === 0 || cursor < oldest.seq ? oldest.seq : cursor;
+			const start = !oldest ? 1 : cursor === 0 || cursor < oldest.seq ? oldest.seq : cursor + 1;
 			for (const event of await this.#db.select().from(schema.firehoseEvents).where(gte(schema.firehoseEvents.seq, start)).orderBy(asc(schema.firehoseEvents.seq)).all()) server.send(event.frame);
 		}
 		return new Response(null, { status: 101, webSocket: client });

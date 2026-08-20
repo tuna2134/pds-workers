@@ -11,17 +11,6 @@ function nextFrame(socket: WebSocket): Promise<Uint8Array> {
 	});
 }
 
-function nextFrames(socket: WebSocket, count: number): Promise<Uint8Array[]> {
-	return new Promise((resolve, reject) => {
-		const frames: Uint8Array[] = [];
-		socket.addEventListener("message", (event) => {
-			frames.push(new Uint8Array(event.data as ArrayBuffer));
-			if (frames.length === count) resolve(frames);
-		});
-		socket.addEventListener("error", () => reject(new Error("WebSocket error")), { once: true });
-	});
-}
-
 function decodeFrame(frame: Uint8Array) {
 	const headerLength = encodeDagCbor({ op: 1, t: "#commit" }).length;
 	return {
@@ -64,13 +53,13 @@ describe("subscribeRepos", () => {
 		expect(live.payload).toMatchObject({ seq: commit.seq, repo: did, rev: commit.rev, tooBig: false, rebase: false });
 		expect((live.payload.blocks as Uint8Array).length).toBeGreaterThan(100);
 		socket.close(1000, "done");
-		await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/firehose-next", record: { $type: "app.bsky.feed.post", text: "next event" } }]);
+		const nextCommit = await repo.applyWrites([{ action: "create", path: "app.bsky.feed.post/firehose-next", record: { $type: "app.bsky.feed.post", text: "next event" } }]);
 
 		const resumed = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.subscribeRepos?cursor=${commit.seq}`, { headers: { upgrade: "websocket" } });
 		const resumedSocket = resumed.webSocket!;
 		resumedSocket.accept();
 		const replay = decodeFrame(await nextFrame(resumedSocket));
-		expect(replay.payload.seq).toBe(commit.seq);
+		expect(replay.payload.seq).toBe(nextCommit.seq);
 		resumedSocket.close(1000, "done");
 	});
 
@@ -102,8 +91,8 @@ describe("subscribeRepos", () => {
 		const socket = subscription.webSocket!;
 		socket.accept();
 		const headerLength = encodeDagCbor({ op: 1, t: "#identity" }).length;
-		const sequences = (await nextFrames(socket, 2)).map((frame) => decodeDagCbor<{ seq: number }>(frame.slice(headerLength)).seq);
-		expect(sequences).toEqual([cursor, next]);
+		const sequences = [decodeDagCbor<{ seq: number }>((await nextFrame(socket)).slice(headerLength)).seq];
+		expect(sequences).toEqual([next]);
 		socket.close(1000, "done");
 	});
 });

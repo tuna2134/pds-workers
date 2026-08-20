@@ -29,7 +29,8 @@
 		{
 			"binding": "DB",
 			"database_name": "pds-workers",
-			"database_id": "2675b1fe-3c03-4e17-8cfe-31b3118f0631"
+			"database_id": "2675b1fe-3c03-4e17-8cfe-31b3118f0631",
+			"migrations_dir": "drizzle/d1"
 		}
 	],
 	"ratelimits": [

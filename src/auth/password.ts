@@ -1,9 +1,4 @@
-import { argon2id } from "argon2-cfworker";
-
 const ITERATIONS = 600_000;
-const ARGON2_MEMORY = 19_456;
-const ARGON2_PASSES = 2;
-const ARGON2_PARALLELISM = 1;
 const encoder = new TextEncoder();
 
 function encode(bytes: Uint8Array): string {
@@ -22,14 +17,6 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
 	return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, 256));
 }
 
-function deriveArgon2(password: string, salt: Uint8Array): string {
-	if (typeof argon2id !== "function") {
-		throw new Error("Argon2id is unavailable in this Workers runtime");
-	}
-
-	return argon2id(password, salt);
-}
-
 export async function hashPassword(password: string): Promise<string> {
 	if (password.length < 8 || password.length > 256) {
 		throw new TypeError("Password must be between 8 and 256 characters");
@@ -37,7 +24,7 @@ export async function hashPassword(password: string): Promise<string> {
 
 	const salt = crypto.getRandomValues(new Uint8Array(16));
 
-	return deriveArgon2(password, salt);
+	return `pbkdf2-sha256$${ITERATIONS}$${encode(salt)}$${encode(await derive(password, salt, ITERATIONS))}`;
 }
 
 async function equal(left: Uint8Array, right: Uint8Array): Promise<boolean> {
@@ -50,14 +37,6 @@ async function equal(left: Uint8Array, right: Uint8Array): Promise<boolean> {
 
 export async function verifyPassword(password: string, encoded: string): Promise<boolean> {
 	try {
-		if (encoded.startsWith("argon2id$")) {
-			const [algorithm, version, parameters, salt, expected, extra] = encoded.split("$");
-			const match = /^m=(\d+),t=(\d+),p=(\d+)$/.exec(parameters);
-			if (algorithm !== "argon2id" || version !== "v=19" || !match || extra) return false;
-			const [memory, passes, parallelism] = match.slice(1).map(Number);
-			if (memory < 19_456 || memory > 262_144 || passes < 2 || passes > 10 || parallelism < 1 || parallelism > 16) return false;
-			return equal(await deriveArgon2(password, decode(salt), memory, passes, parallelism), decode(expected));
-		}
 		const [algorithm, count, salt, expected, extra] = encoded.split("$");
 		if (algorithm !== "pbkdf2-sha256" || extra) return false;
 		const iterations = Number(count);

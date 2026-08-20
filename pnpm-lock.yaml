@@ -35,9 +35,6 @@ importers:
       '@noble/curves':
         specifier: ^2.3.0
         version: 2.3.0
-      argon2-cfworker:
-        specifier: ^0.1.5
-        version: 0.1.5
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2
@@ -1729,9 +1726,6 @@ packages:
   ansi-styles@6.2.3:
     resolution: {integrity: sha512-4Dj6M28JB+oAH8kFkTLUo+a2jwOFkuqb3yucU0CANcRRUbxS0cP0nZYCGjcc3BNXwRIsUVmDGgzawme7zvJHvg==}
     engines: {node: '>=12'}
-
-  argon2-cfworker@0.1.5:
-    resolution: {integrity: sha512-yhbDkGXoR2RjrgD+W4HFgwC5YW1PnufIBQWJvggNDH233m5AhN2p6hCZHeFtJo0Kt4vwsR9SJW0L2S7baDWHpQ==}
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -3720,8 +3714,6 @@ snapshots:
   ansi-regex@6.3.0: {}
 
   ansi-styles@6.2.3: {}
-
-  argon2-cfworker@0.1.5: {}
 
   assertion-error@2.0.1: {}
 
