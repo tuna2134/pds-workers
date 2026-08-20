@@ -209,8 +209,12 @@ export function createRouter(): XrpcRouter {
 		inviteCodeRequired: false,
 		blobUploadLimit: Number(env.BLOB_UPLOAD_LIMIT),
 	}));
-	router.registerQuery("com.atproto.identity.resolveHandle", async ({ params }) => {
-		try { return { did: await resolveHandle(required(params, "handle")) }; }
+	router.registerQuery("com.atproto.identity.resolveHandle", async ({ env, params }) => {
+		try {
+			const handle = normalizeHandle(required(params, "handle"));
+			const local = await new AccountRepository(d1(env.DB)).find(handle);
+			return { did: local?.status === "active" ? local.did : await resolveHandle(handle) };
+		}
 		catch (error) {
 			if (error instanceof TypeError) throw new XrpcError(400, "InvalidRequest", error.message);
 			throw new XrpcError(400, "HandleNotFound");
@@ -556,6 +560,15 @@ export function createRouter(): XrpcRouter {
 		await firehose.publishAccount(`account:${did}:active`, did, true);
 		await audit(context, "account.created", active.id);
 		return { ...await new SessionRepository(database, env.SESSION_JWT_SECRET, env.SERVICE_DID).create(active), handle, did, didDoc };
+	});
+	router.registerProcedure("com.atproto.server.reserveSigningKey", async (context) => {
+		const input = await jsonBody<{ did?: string }>(context.request);
+		if (input.did && !validDid(input.did)) throw new XrpcError(400, "InvalidRequest", "Invalid DID");
+		const rate = await context.env.CREATE_ACCOUNT_RATE.limit({ key: `reserve:${await tokenHash(context.request.headers.get("cf-connecting-ip") ?? "unknown")}` });
+		if (!rate.success) throw new XrpcError(429, "RateLimitExceeded");
+		const privateKey = input.did ? undefined : secp256k1.utils.randomSecretKey();
+		const name = input.did ?? k256DidKey(secp256k1.getPublicKey(privateKey!));
+		return { signingKey: await repo(context.env, name).reserveSigningKey(name, privateKey) };
 	});
 	router.registerQuery("com.atproto.server.getSession", async (context) => {
 		const { account, permissions } = await authenticated(context, "at+jwt", true);

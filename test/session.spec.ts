@@ -124,6 +124,10 @@ describe("password sessions", () => {
 		fetchMock.activate();
 		fetchMock.disableNetConnect();
 		fetchMock.get("https://plc.directory").intercept({ method: "GET", path: `/${did}` }).reply(200, JSON.stringify(document), { headers: { "content-type": "application/json" } }).times(2);
+		const reserved = await SELF.fetch("https://example.com/xrpc/com.atproto.server.reserveSigningKey", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ did }) });
+		expect(reserved.status, await reserved.clone().text()).toBe(200);
+		const { signingKey } = await reserved.json<{ signingKey: string }>();
+		expect(await (await SELF.fetch("https://example.com/xrpc/com.atproto.server.reserveSigningKey", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ did }) })).json()).toEqual({ signingKey });
 		const created = await SELF.fetch("https://example.com/xrpc/com.atproto.server.createAccount", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${serviceJwt(sourceKey, did)}` }, body: JSON.stringify({ did, handle: "import.localhost", email: "import@example.com", password: "a secure import password" }) });
 		expect(created.status, await created.clone().text()).toBe(200);
 		const { accessJwt } = await created.json<{ accessJwt: string }>();
@@ -143,6 +147,7 @@ describe("password sessions", () => {
 		const recommendedResponse = await SELF.fetch("https://example.com/xrpc/com.atproto.identity.getRecommendedDidCredentials", { headers: { authorization: `Bearer ${accessJwt}` } });
 		expect(recommendedResponse.status).toBe(200);
 		const recommended = await recommendedResponse.json<{ rotationKeys: string[]; verificationMethods: { atproto: string }; alsoKnownAs: string[]; services: { atproto_pds: { type: string; endpoint: string } } }>();
+		expect(recommended.verificationMethods.atproto).toBe(signingKey);
 		const last = { type: "plc_operation", rotationKeys: [formatDidKey("ES256K", secp256k1.getPublicKey(oldRotationKey))], verificationMethods: { atproto: formatDidKey("ES256K", secp256k1.getPublicKey(sourceKey)) }, alsoKnownAs: ["at://import.localhost"], services: { atproto_pds: { type: "AtprotoPersonalDataServer", endpoint: "https://old.example.com" } }, prev: null, sig: "old" };
 		const unsigned = { type: "plc_operation" as const, ...recommended, prev: (await encodeBlock(last)).cid.toString() };
 		const operation = { ...unsigned, sig: b64(secp256k1.sign(dagCbor.encode(unsigned), oldRotationKey, { prehash: true, format: "compact", lowS: true })) };
@@ -360,6 +365,9 @@ describe("password sessions", () => {
 		const uploaded = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.uploadBlob", { method: "POST", headers: { authorization: `Bearer ${tokens.accessJwt}`, "content-type": "image/png", "content-length": String(blobBytes.length) }, body: blobBytes });
 		expect(uploaded.status).toBe(200);
 		const { blob } = await uploaded.json<{ blob: { $type: "blob"; ref: { $link: string }; mimeType: string; size: number } }>();
+		const truncated = await SELF.fetch("https://example.com/xrpc/com.atproto.repo.uploadBlob", { method: "POST", headers: { authorization: `Bearer ${tokens.accessJwt}`, "content-type": "image/png", "content-length": String(blobBytes.length + 1) }, body: blobBytes });
+		expect(truncated.status).toBe(400);
+		expect((await env.BLOBS.list({ prefix: `blobs/${did}/upload-` })).objects).toHaveLength(0);
 		const temporary = await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.getBlob?did=${did}&cid=${blob.ref.$link}`);
 		expect(temporary.status).toBe(400);
 		expect(await SELF.fetch(`https://example.com/xrpc/com.atproto.sync.listBlobs?did=${did}`).then((response) => response.json())).toEqual({ cids: [] });

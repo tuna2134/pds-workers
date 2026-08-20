@@ -154,14 +154,14 @@ goat repo mst /tmp/repo.car
 
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 7` として同期し、実PLCアカウントも `active` として現在のrepo revisionを取得しています。
+- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 27` として同期し、実PLCアカウントをrevision `3mtj4ewndm2ne` まで取得しています。同revisionの本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、seq 27のprofile更新を復元できています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化していますが、資格情報がないため本番restore drillは **BLOCKED** です。外部R2複製は未実装です。
 - **BLOCKED:** `pds-workers-blobs` は存在しますが、現在 R2 bucket lock rule が未設定です。保持日数はアカウント削除・blob cleanup の挙動を変えるため、運用方針を決めてから設定してください。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
 - Workers標準WebCryptoのPBKDF2-SHA256（Workersの上限である100,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
-- 本番 `BLOB_UPLOAD_LIMIT` は50 MBです。現行 `app.bsky.embed.video` Lexiconの最大300 MBを満たさないため、大容量video uploadは未対応です。Cloudflare Free/Proのrequest body上限は100 MBなので、完全対応には上位planまたは別upload経路が必要です。
+- 本番 `BLOB_UPLOAD_LIMIT` はCloudflare Free/Pro上限と同じ100,000,000 bytesです。Content-Length付きuploadはincremental SHA-256とR2 streamingを使い、Content-Lengthなしはメモリ保護のため50 MBまでbufferします。現行 `app.bsky.embed.video` Lexiconの最大300,000,000 bytesへの完全対応にはEnterprise相当のrequest body上限と設定変更が必要です（Businessは200 MB、Enterpriseはdefault 500 MB）。
 - PLC登録失敗時はaccountを `pending` に保ち、同一handle・email・passwordでの `createAccount` 再送時に保存済み鍵から同一genesisを再構成します。POST結果が曖昧な場合も公開済みPLC dataが完全一致したときだけactivateします。
 - Firehoseは直近10,000 frameを保持します。本番trafficに合わせた保持期間とsnapshot/backfill設計が必要です。
 - `app.bsky.feed.getAuthorFeed` と `getPosts` は、このPDSがホストする `app.bsky.feed.post` のみを返します。再投稿を含むAppViewの統合タイムライン、ラベル、外部投稿の検索は別サービスの責務です。

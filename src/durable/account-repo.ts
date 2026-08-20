@@ -36,6 +36,10 @@ function base64url(value: Uint8Array) {
 	return btoa(binary).replaceAll("=", "").replaceAll("+", "-").replaceAll("/", "_");
 }
 
+function chunks<T>(values: T[], size: number): T[][] {
+	return Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
+}
+
 export class AccountRepo extends DurableObject<Env> {
 	readonly #db: DrizzleSqliteDODatabase<typeof schema>;
 	readonly #clock = new TidClock();
@@ -54,10 +58,28 @@ export class AccountRepo extends DurableObject<Env> {
 				if (existing.did !== did) throw new Error("Durable Object DID mismatch");
 				return { did, rev: existing.rev, commit: existing.commitCid };
 			}
-			const privateKey = suppliedPrivateKey ?? secp256k1.utils.randomSecretKey();
+			const reserved = await this.ctx.storage.get<string>("reservedSigningKey");
+			const privateKey = reserved ? await unwrapKey(reserved, this.env.SIGNING_KEY_WRAPPING_SECRET) : suppliedPrivateKey ?? secp256k1.utils.randomSecretKey();
 			const wrappedSigningKey = await wrapKey(privateKey, this.env.SIGNING_KEY_WRAPPING_SECRET);
 			const result = await this.#commit(did, wrappedSigningKey, privateKey, []);
+			if (reserved) await this.ctx.storage.delete("reservedSigningKey");
 			return { ...result, publicKey: secp256k1.getPublicKey(privateKey) };
+		});
+	}
+
+	async reserveSigningKey(did: string, suppliedPrivateKey?: Uint8Array) {
+		return this.#serialize(async () => {
+			const state = await this.#db.select().from(schema.repoState).get();
+			if (state) {
+				if (state.did !== did) throw new Error("Durable Object DID mismatch");
+				return this.signingKeyDid();
+			}
+			let wrapped = await this.ctx.storage.get<string>("reservedSigningKey");
+			if (!wrapped) {
+				wrapped = await wrapKey(suppliedPrivateKey ?? secp256k1.utils.randomSecretKey(), this.env.SIGNING_KEY_WRAPPING_SECRET);
+				await this.ctx.storage.put("reservedSigningKey", wrapped);
+			}
+			return formatDidKey("ES256K", secp256k1.getPublicKey(await unwrapKey(wrapped, this.env.SIGNING_KEY_WRAPPING_SECRET)));
 		});
 	}
 
@@ -235,7 +257,7 @@ export class AccountRepo extends DurableObject<Env> {
 			try { return CID.parse(cid); }
 			catch { throw new TypeError("Invalid CID"); }
 		});
-		const rows = await this.#db.select().from(schema.blocks).where(inArray(schema.blocks.cid, cids)).all();
+		const rows = (await Promise.all(chunks(cids, 100).map((batch) => this.#db.select().from(schema.blocks).where(inArray(schema.blocks.cid, batch)).all()))).flat();
 		if (rows.length !== new Set(cids).size) throw new Error("BlockNotFound");
 		const byCid = new Map(rows.map((row) => [row.cid, row]));
 		return encodeCar(requested, requested.map((cid) => ({ cid, bytes: new Uint8Array(byCid.get(cid.toString())!.bytes) })));
@@ -318,9 +340,9 @@ export class AccountRepo extends DurableObject<Env> {
 		await this.#db.transaction(async (tx) => {
 			await tx.delete(schema.records);
 			await tx.delete(schema.blobRefs);
-			if (entries.length) await tx.insert(schema.records).values(entries.map(([path, record]) => ({ path, cid: record.cid.toString(), bytes: Buffer.from(record.bytes) })));
-			if (references.length) await tx.insert(schema.blobRefs).values(references);
-			await tx.insert(schema.blocks).values([commit, ...tree.blocks, ...entries.map(([, record]) => record)].map((block) => ({ cid: block.cid.toString(), bytes: Buffer.from(block.bytes), createdAt: now }))).onConflictDoNothing();
+			for (const batch of chunks(entries.map(([path, record]) => ({ path, cid: record.cid.toString(), bytes: Buffer.from(record.bytes) })), 25)) await tx.insert(schema.records).values(batch);
+			for (const batch of chunks(references, 25)) await tx.insert(schema.blobRefs).values(batch);
+			for (const batch of chunks([commit, ...tree.blocks, ...entries.map(([, record]) => record)].map((block) => ({ cid: block.cid.toString(), bytes: Buffer.from(block.bytes), createdAt: now })), 25)) await tx.insert(schema.blocks).values(batch).onConflictDoNothing();
 			await tx.insert(schema.commits).values({ rev, cid: commit.cid.toString(), rootCid: tree.root.toString(), bytes: Buffer.from(commit.bytes), createdAt: now });
 			await tx.insert(schema.repoState).values({ id: 1, did, rev, rootCid: tree.root.toString(), commitCid: commit.cid.toString(), wrappedSigningKey }).onConflictDoUpdate({ target: schema.repoState.id, set: { rev, rootCid: tree.root.toString(), commitCid: commit.cid.toString() } });
 			await tx.insert(schema.firehoseOutbox).values({ id: event.id, payload: Buffer.from(encodeDagCbor(event)), createdAt: now });

@@ -130,7 +130,7 @@
 	"vars": {
 		"SERVICE_DID": "did:web:bsky.tuna2134.dev",
 		"AVAILABLE_USER_DOMAINS": "[\".bsky.tuna2134.dev\"]",
-		"BLOB_UPLOAD_LIMIT": "52428800",
+		"BLOB_UPLOAD_LIMIT": "100000000",
 		"PDS_URL": "https://bsky.tuna2134.dev",
 		"CRAWLERS": "[\"https://bsky.network\"]",
 		"PLC_DIRECTORY": "https://plc.directory",

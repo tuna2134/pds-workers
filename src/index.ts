@@ -13,6 +13,7 @@
 
 export { AccountRepo } from "./durable/account-repo";
 export { Firehose } from "./durable/firehose";
+import { Hono } from "hono";
 import { createRouter } from "./api/register";
 import { authorizationServerMetadata, protectedResourceMetadata } from "./auth/oauth/metadata";
 import { oauthRoute } from "./auth/oauth/routes";
@@ -28,6 +29,7 @@ import { tokenHash } from "./crypto/jwt";
 import { readBody } from "./utils/body";
 
 const router = createRouter();
+const app = new Hono<{ Bindings: Env }>();
 
 function pitrTarget(url: URL, env: Env) {
 	const kind = url.searchParams.get("kind");
@@ -84,35 +86,32 @@ function xrpcHeaders(response: Response, request: Request) {
 	return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+app.all("/admin/pitr", (c) => adminPitr(c.req.raw, c.env));
+app.get("/.well-known/oauth-protected-resource", (c) => Response.json(protectedResourceMetadata(c.env), { headers: { "access-control-allow-origin": "*" } }));
+app.get("/.well-known/oauth-authorization-server", (c) => Response.json(authorizationServerMetadata(c.env), { headers: { "access-control-allow-origin": "*" } }));
+app.get("/.well-known/did.json", (c) => c.env.SERVICE_DID.startsWith("did:web:") ? Response.json({
+	"@context": ["https://www.w3.org/ns/did/v1"],
+	id: c.env.SERVICE_DID,
+	service: [{ id: `${c.env.SERVICE_DID}#atproto_pds`, type: "AtprotoPersonalDataServer", serviceEndpoint: c.env.PDS_URL }],
+}, { headers: { "cache-control": "public, max-age=300" } }) : c.notFound());
+app.get("/.well-known/atproto-did", async (c) => {
+	const account = await new AccountRepository(d1(c.env.DB)).find(new URL(c.req.url).hostname.toLowerCase());
+	return account?.status === "active" ? new Response(account.did, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } }) : c.notFound();
+});
+app.options("/oauth/*", () => oauthHeaders(new Response(null, { status: 204 })));
+app.all("/oauth/*", async (c) => oauthHeaders(await oauthRoute(c.req.raw, c.env) ?? new Response("Not Found", { status: 404 })));
+app.all("/xrpc/com.atproto.sync.subscribeRepos", (c) => c.env.FIREHOSE.getByName("global").fetch(c.req.raw));
+app.options("/xrpc/*", (c) => xrpcHeaders(new Response(null, { status: 204 }), c.req.raw));
+app.all("/xrpc/:nsid", async (c) => {
+	const { nsid } = c.req.param();
+	const request = c.req.raw;
+	const local = router.has(nsid, request.method);
+	const localAppState = nsid === "app.bsky.actor.getPreferences" || nsid === "app.bsky.actor.putPreferences";
+	return xrpcHeaders(await (!local || request.headers.has("atproto-proxy") && nsid.startsWith("app.bsky.") && !localAppState ? proxyXrpc(request, c.env) : router.handle(request, c.env)), request);
+});
+
 export default {
-	async fetch(request, env): Promise<Response> {
-		const pathname = new URL(request.url).pathname;
-		if (pathname === "/admin/pitr") return adminPitr(request, env);
-		if (pathname === "/.well-known/oauth-protected-resource") return Response.json(protectedResourceMetadata(env), { headers: { "access-control-allow-origin": "*" } });
-		if (pathname === "/.well-known/oauth-authorization-server") return Response.json(authorizationServerMetadata(env), { headers: { "access-control-allow-origin": "*" } });
-		if (pathname === "/.well-known/did.json" && env.SERVICE_DID.startsWith("did:web:")) return Response.json({
-			"@context": ["https://www.w3.org/ns/did/v1"],
-			id: env.SERVICE_DID,
-			service: [{ id: `${env.SERVICE_DID}#atproto_pds`, type: "AtprotoPersonalDataServer", serviceEndpoint: env.PDS_URL }],
-		}, { headers: { "cache-control": "public, max-age=300" } });
-		if (pathname === "/.well-known/atproto-did") {
-			const account = await new AccountRepository(d1(env.DB)).find(new URL(request.url).hostname.toLowerCase());
-			return account?.status === "active" ? new Response(account.did, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } }) : new Response("Not Found", { status: 404 });
-		}
-		if (pathname.startsWith("/oauth/")) {
-			if (request.method === "OPTIONS") return oauthHeaders(new Response(null, { status: 204 }));
-			return oauthHeaders(await oauthRoute(request, env) ?? new Response("Not Found", { status: 404 }));
-		}
-		if (pathname === "/xrpc/com.atproto.sync.subscribeRepos") return env.FIREHOSE.getByName("global").fetch(request);
-		if (pathname.startsWith("/xrpc/")) {
-			if (request.method === "OPTIONS") return xrpcHeaders(new Response(null, { status: 204 }), request);
-			const nsid = pathname.slice(6);
-			const local = router.has(nsid, request.method);
-			const localAppState = nsid === "app.bsky.actor.getPreferences" || nsid === "app.bsky.actor.putPreferences";
-			return xrpcHeaders(await (!local || request.headers.has("atproto-proxy") && nsid.startsWith("app.bsky.") && !localAppState ? proxyXrpc(request, env) : router.handle(request, env)), request);
-		}
-		return new Response("Not Found", { status: 404 });
-	},
+	fetch: (request, env, ctx) => app.fetch(request, env, ctx),
 	async queue(batch: MessageBatch<BlobCleanupMessage>, env): Promise<void> {
 		for (const message of batch.messages) {
 			try { await cleanupBlob(env, message.body); message.ack(); }

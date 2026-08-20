@@ -36,6 +36,17 @@ describe("AccountRepo", () => {
 		expect(deleted.rev > updated.rev).toBe(true);
 	});
 
+	it("commits repositories beyond the Durable Object SQL parameter limit", async () => {
+		const repo = env.ACCOUNT_REPO.getByName("did:plc:largewrites");
+		await repo.initialize("did:plc:largewrites");
+		await repo.applyWrites(Array.from({ length: 40 }, (_, index) => ({
+			action: "create" as const,
+			path: `app.bsky.feed.post/${index}`,
+			record: { $type: "app.bsky.feed.post", text: String(index), createdAt: "2026-08-20T00:00:00.000Z" },
+		})));
+		expect(await repo.listRecords("app.bsky.feed.post")).toHaveLength(40);
+	});
+
 	it("cleans only orphaned blob uploads", async () => {
 		const did = "did:plc:bbbbbbbbbbbbbbbbbbbbbbbb";
 		const repo = env.ACCOUNT_REPO.getByName(did);
