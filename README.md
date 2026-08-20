@@ -155,11 +155,12 @@ goat repo mst /tmp/repo.car
 - **検証済み:** 現在のCloudflare target (`pds-workers`) ではremote D1 migration、Worker deploy、D1/R2/DO binding初期化、`describeServer` を確認済み。
 - **検証済み:** Vitest 4.1 / Cloudflare Workers test integration 0.22の現行runtime (`workerd 1.20260815.1`) でunit 30件・Workers integration 32件が成功し、`compatibility_date = 2026-08-15` と同じruntimeで検証しています。
 - **検証済み:** 本物のPLC directoryへ1アカウントを登録し、取得したCARを独立実装で署名・root検証済み。
-- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 36` として同期し、実PLCアカウントをrevision `3mtjcmi6lls7y` まで取得しています。同revisionの37-record本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、commitを復元できています。
+- **検証済み:** `bsky.network` Relay は本番PDSを `active`、`accountCount: 1`、`seq: 46` として同期し、実PLCアカウントをrevision `3mtjfypzvwcf7` まで取得しています。同revisionの41-record本番CARはGoatでMST/recordsを走査し、PLCの現在キーを使った公式 `@atproto/repo.verifyRepoCar` で署名・root検証済みです。`subscribeRepos` のcursor再接続もGoatの署名・MST検証を通り、commitを復元できています。
 - OAuth公開permission-set (`include:`) は `_lexicon` DNS、DID document、authority PDSの公開Lexicon recordを検証して解決し、公式 `@atproto/oauth-scopes` で権限へ展開します。
 - 本番OAuth metadataは公式 `@atproto/oauth-client` 0.8.3のresolverを通過済みです。実アカウントを使うブラウザauthorization-code exchangeは、資格情報と対話的同意が必要なため **BLOCKED/unverified** です。
 - D1はCloudflare Time Travel、SQLite DOは管理者限定operator endpoint経由の30日PITR、R2はbucket lockを使う復旧runbookを文書化しています。本番restore drillは破壊テストの明示承認とmaintenance windowがないため **BLOCKED** です。外部R2複製は未実装です。
 - **BLOCKED:** `pds-workers-blobs` は存在しますが、現在 R2 bucket lock rule が未設定です。保持日数はアカウント削除・blob cleanup の挙動を変えるため、運用方針を決めてから設定してください。
+- **BLOCKED:** 本番 `EMAIL_FROM` は `noreply@example.com` の例示値のままです。Cloudflare Email Serviceで実送信domainをonboardし、送信元を変更してからpassword reset・email confirmation・account deletionメールの本番配送を検証してください。
 - read-only admin account lookup/searchは実装済みです。書き込み系admin APIとemail MFAは、安全のため未対応を偽装せず拒否します。
 - 実装済みXRPC endpointと固定済み主要recordは公式Lexiconで検証します。未固定の任意record schemaは既定でfail-open、`validate:true` ではfail-closedです。
 - Workers標準WebCryptoのPBKDF2-SHA256（Workersの上限である100,000回）を使用します。`node:crypto` Argon2はWorkers本番ランタイムの前提にせず、Argon2id WASM実装を導入する場合はベンチマークとメモリ上限の検証が必要です。
